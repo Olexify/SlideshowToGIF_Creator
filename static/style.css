@@ -235,3 +235,40 @@ kbd { font: 600 10px/1 ui-monospace, Consolas, monospace; color: var(--text); ba
 #spInfo { color: var(--muted); margin: 10px 0; }
 #splitDlg .switch { display: flex; margin: 8px 0; }
 .spBtns { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ---------- projects menu ---------- */
+#projWrap { position: relative; }
+.projbtn { background: var(--raised); max-width: 260px; }
+.projbtn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+#projMenu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 50; width: 340px; background: var(--panel); border: 1px solid var(--line2);
+  border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.6); padding: 8px; animation: tipin .12s ease-out; }
+.pmHead { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 4px 8px 6px; }
+#projList { max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.pmItem { display: flex; flex-direction: column; align-items: flex-start; gap: 0; border: 0; background: transparent; text-align: left; padding: 7px 10px; }
+.pmItem b { font-weight: 600; }
+.pmItem span { font-size: 11px; color: var(--muted); }
+.pmItem.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.pmActions { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+.pmActions button { justify-content: flex-start; border: 0; background: transparent; }
+.pmActions button:hover { background: var(--hover); }
+#projMenu .hint { padding: 4px 8px 0; }
+.danger { color: var(--err) !important; }
+.danger-solid { background: var(--err); border-color: var(--err); color: #200; font-weight: 600; }
+.danger-solid:hover { background: #ff8a8a; }
+
+/* ---------- ask dialog, storage, missing files ---------- */
+#askDlg { width: 420px; }
+#askText { color: var(--muted); margin: 0 0 12px; }
+#askInput { width: 100%; margin-bottom: 14px; }
+.path { font: 11px ui-monospace, Consolas, monospace; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 5px 8px; margin: 0 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.checks.four { grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 10px; }
+.checks.four .toggle span { padding: 5px 2px; }
+.dropcard { cursor: default; }
+.dropcard .row { justify-content: center; margin-top: 6px; }
+.dropcard .row > * { flex: none; }
+.dropcard .small { font-size: 11px; color: var(--faint); }
+.thumb.missing .pic::after { content: "FILE NOT FOUND"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 10px; font-weight: 700;
+  color: var(--err); background: rgba(40,10,10,.8); }
+button.addtile { background: transparent; }
+#toolbar { position: relative; z-index: 20; }

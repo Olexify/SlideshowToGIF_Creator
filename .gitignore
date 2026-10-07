@@ -2,3 +2,6 @@ project/
 __pycache__/
 *.tmp
 *.lnk
+projects/
+exports/
+settings.json

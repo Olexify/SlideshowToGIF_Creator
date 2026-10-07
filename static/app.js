@@ -2,10 +2,22 @@ import { IDENTITY, drawFrame, renderExport } from "./render.js";
 
 const $ = (id) => document.getElementById(id);
 const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
-const urlOf = (file) => "/p/" + file.split("/").map(encodeURIComponent).join("/");
-const stem = (file) => file.split("/").pop().replace(/\.[^.]+$/, "");
+// file = absolute path (linked original) or "files/x.png" (copy inside the project folder)
+const urlOf = (file) => `/api/p/${pid}/img?f=${encodeURIComponent(file)}`;
+const baseName = (file) => file.split(/[\\/]/).pop();
+const stem = (file) => baseName(file).replace(/\.[^.]+$/, "");
+// All API calls carry this header: it's how the server tells our page apart from other websites.
+async function api(path, { method = "GET", body, json, keepalive } = {}) {
+  const r = await fetch(path, { method, keepalive, headers: { "X-Frame-Aligner": "1" },
+    body: json !== undefined ? JSON.stringify(json) : body });
+  const data = r.headers.get("Content-Type")?.includes("json") ? await r.json() : null;
+  if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
+  return data;
+}
 
 // ---------- state ----------
+let pid = null; // current project id
+let settings = {};
 let project = { frames: [] };
 let cur = 0;
 let playing = false, playTimer = 0, pingDir = 1;
@@ -47,6 +59,7 @@ function img(file) {
       if (!project.canvas) { project.canvas = { width: im.naturalWidth, height: im.naturalHeight }; syncCanvas(); fit(); save(); }
       render();
     };
+    im.onerror = () => { im.missing = true; refreshTimeline(); render(); };
     im.src = urlOf(file);
     images.set(file, im);
   }
@@ -71,8 +84,8 @@ function save() {
 async function flushSave(keepalive = false) {
   clearTimeout(saveTimer); saveTimer = 0;
   try {
-    const r = await fetch("/api/project", { method: "PUT", body: JSON.stringify(project), keepalive });
-    if (!r.ok) throw new Error(r.status);
+    if (!pid) return;
+    await api(`/api/p/${pid}`, { method: "PUT", json: project, keepalive });
     status("Saved", "ok");
   } catch (e) {
     status("Save failed, retrying…", "err");
@@ -373,7 +386,7 @@ function updatePanel() {
   set("dur", f?.duration ?? "");
   $("dur").placeholder = `auto (${Math.round(1000 / project.fps)})`;
   $("frameLabel").textContent = f ? `${cur + 1} / ${project.frames.length}` : "–";
-  $("hudName").textContent = f ? f.file.split("/").pop() : "";
+  $("hudName").textContent = f ? baseName(f.file) + (images.get(f.file)?.missing ? "  ·  FILE NOT FOUND" : "") : "";
   $("scrub").max = Math.max(0, project.frames.length - 1); $("scrub").value = cur;
   const changedVal = { tx: f && f.x !== 0, ty: f && f.y !== 0, ts: f && f.scale !== 1, tr: f && f.rotation !== 0 };
   for (const [id, on] of Object.entries(changedVal)) $(id).parentElement.classList.toggle("changed", !!on);
@@ -559,21 +572,21 @@ function buildTimeline() {
     el.ondragleave = () => el.classList.remove("over", "dropfiles");
     el.ondrop = (e) => {
       e.preventDefault(); e.stopPropagation(); el.classList.remove("over", "dropfiles"); hideDrop();
-      if (isFileDrag(e)) return addFiles(e.dataTransfer.files, i); // insert before this frame
+      if (isFileDrag(e)) return dropFiles(e.dataTransfer.files, i); // insert before this frame
       if (dragFrom >= 0 && dragFrom !== i) moveFrame(dragFrom, i);
       dragFrom = -1;
     };
     box.append(el);
   });
   // "+" tile: click to browse, drop files to append, drop a frame to move it to the end
-  const add = document.createElement("label");
-  add.className = "addtile";
-  add.innerHTML = `<svg><use href="#i-plus"/></svg>Add frames<input type="file" accept="image/png,image/jpeg,image/webp" multiple hidden class="fileInput2">`;
+  const add = document.createElement("button");
+  add.className = "addtile pickFiles";
+  add.innerHTML = `<svg><use href="#i-plus"/></svg>Add frames`;
   add.ondragover = (e) => { if (dragFrom < 0 && !isFileDrag(e)) return; e.preventDefault(); e.stopPropagation(); add.classList.add("dropfiles"); };
   add.ondragleave = () => add.classList.remove("dropfiles");
   add.ondrop = (e) => {
     e.preventDefault(); e.stopPropagation(); add.classList.remove("dropfiles"); hideDrop();
-    if (isFileDrag(e)) return addFiles(e.dataTransfer.files, project.frames.length);
+    if (isFileDrag(e)) return dropFiles(e.dataTransfer.files, project.frames.length);
     if (dragFrom >= 0) moveFrame(dragFrom, project.frames.length - 1);
     dragFrom = -1;
   };
@@ -591,6 +604,7 @@ function refreshTimeline() {
     el.classList.toggle("cur", i === cur);
     el.classList.toggle("ref", i === ri && $("refMode").value !== "off");
     el.querySelector(".dirty").hidden = isIdentity(project.frames[i]);
+    el.classList.toggle("missing", !!images.get(project.frames[i].file)?.missing);
     el.querySelector("input").placeholder = auto;
   });
   $("thumbs").children[cur]?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -618,9 +632,7 @@ async function addFiles(files, at = null, undoable = true) {
   for (const [n, file] of files.entries()) {
     toast(`Adding ${n + 1} / ${files.length}: ${file.name}`, false, 0);
     try {
-      const r = await fetch("/api/upload?name=" + encodeURIComponent(file.name), { method: "POST", body: file });
-      const j = await r.json();
-      if (!j.file) throw new Error(j.error);
+      const j = await api(`/api/p/${pid}/upload?name=` + encodeURIComponent(file.name), { method: "POST", body: file });
       insertFrame(j.file, at === null ? null : at++);
       added++;
     } catch (e) { toast(`${file.name}: ${e.message}`, true, 5000); }
@@ -700,19 +712,30 @@ $("spGo").onclick = async () => {
   const added = await addFiles(files, $("spRemove").checked ? at : at + 1, false);
   if (added) { go(at + ($("spRemove").checked ? 0 : 1)); fit(); }
 };
-document.addEventListener("change", (e) => {
-  if (e.target.matches("#fileInput, .fileInput2")) { addFiles(e.target.files); e.target.value = ""; }
+// Native file dialog runs in the server, which is the only way to learn real disk paths: images get
+// linked where they are (or copied, if "Keep copies" is on).
+async function pickFrames(folder = false) {
+  toast(folder ? "Choose a folder in the window that just opened…" : "Choose images in the window that just opened…", false, 0);
+  try {
+    const { files } = await api(`/api/p/${pid}/pick`, { method: "POST", json: { folder } });
+    if (!files.length) return toast(folder ? "No images found" : "Nothing added");
+    checkpoint();
+    const wasEmpty = !project.frames.length;
+    const have = new Set(project.frames.map((f) => f.file));
+    const add = files.filter((f) => !have.has(f));
+    add.forEach((f) => insertFrame(f));
+    if (wasEmpty) cur = 0;
+    changed(true);
+    const skipped = files.length - add.length;
+    toast(`Added ${add.length} frame${add.length === 1 ? "" : "s"}` + (skipped ? ` (${skipped} already in the project)` : ""));
+  } catch (e) { toast(e.message, true, 5000); }
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".pickFiles")) pickFrames(false);
+  else if (e.target.closest(".pickFolder")) pickFrames(true);
 });
-$("rescan").onclick = async () => {
-  const files = await (await fetch("/api/files")).json();
-  const have = new Set(project.frames.map((f) => f.file));
-  const add = files.filter((f) => !have.has(f));
-  if (!add.length) return toast("No new images in the frames folder");
-  checkpoint();
-  add.forEach((f) => insertFrame(f));
-  changed(true);
-  toast(`Added ${add.length} frame${add.length > 1 ? "s" : ""} from folder`);
-};
+$("addFiles").onclick = () => pickFrames(false);
+$("addFolder").onclick = () => pickFrames(true);
 // Drop anywhere else in the window: add in filename order.
 let dropDepth = 0;
 function hideDrop() { dropDepth = 0; $("drop").hidden = true; }
@@ -727,8 +750,17 @@ addEventListener("dragover", (e) => { if (isFileDrag(e)) e.preventDefault(); });
 addEventListener("drop", (e) => {
   if (!isFileDrag(e)) return;
   e.preventDefault(); hideDrop();
-  addFiles(e.dataTransfer.files);
+  dropFiles(e.dataTransfer.files);
 });
+// Dropped files arrive without a disk path, so they can only be copied. Say so once per session.
+let dropNoticeShown = false;
+async function dropFiles(files, at = null) {
+  await addFiles(files, at);
+  if (!dropNoticeShown) {
+    dropNoticeShown = true;
+    toast("Dropped files are copied into the project. Use Add frames to link originals instead.", false, 6000);
+  }
+}
 
 // ---------- export ----------
 function exportSequence() {
@@ -737,12 +769,16 @@ function exportSequence() {
   if (project.loop === "pingpong") for (let i = n - 2; i > 0; i--) order.push(i);
   return order.map((i) => ({ i: i + 1, duration: duration(project.frames[i]) }));
 }
-async function doExport(formats) {
+async function doExport() {
   if (!project.frames.length || !project.canvas) return;
+  const formats = [["exGif", "gif"], ["exMp4", "mp4"], ["exWebm", "webm"]].filter(([id]) => $(id).checked).map(([, f]) => f);
+  const png = $("exPng").checked;
+  if (!formats.length && !png) return toast("Pick at least one format", true);
+  const missing = project.frames.filter((f) => images.get(f.file)?.missing);
+  if (missing.length) return toast(`${missing.length} frame file(s) can't be found. Remove or re-add them first.`, true, 5000);
   if (playing) togglePlay();
   const state = $("exportState");
-  const btns = [$("export"), $("exportPng")];
-  btns.forEach((b) => (b.disabled = true));
+  $("export").disabled = true; $("openExports").hidden = true;
   try {
     await flushSave();
     const c = document.createElement("canvas");
@@ -754,26 +790,151 @@ async function doExport(formats) {
       await im.decode();
       renderExport(g, im, T(f), project.background);
       const blob = await new Promise((res) => c.toBlob(res, "image/png"));
-      const r = await fetch(`/api/export/frame?i=${i + 1}`, { method: "POST", body: blob });
-      if (!r.ok) throw new Error((await r.json()).error);
+      await api(`/api/p/${pid}/export/frame?i=${i + 1}`, { method: "POST", body: blob });
     }
-    let outs = ["output/aligned/"];
-    if (formats.length) {
-      state.textContent = `Encoding ${formats.join(", ")}…`;
-      const r = await fetch("/api/export/encode", { method: "POST", body: JSON.stringify({ formats, sequence: exportSequence() }) });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error);
-      outs = outs.concat(j.outputs);
-    }
-    state.textContent = "Done: " + outs.join(", ");
+    state.textContent = "Encoding…";
+    const j = await api(`/api/p/${pid}/export/finish`, { method: "POST", json: { formats, png, sequence: exportSequence() } });
+    state.textContent = "Saved: " + j.outputs.map(baseName).join(", ") + " → " + j.dir;
+    $("openExports").hidden = false;
   } catch (e) {
     state.textContent = "Export failed: " + e.message;
   } finally {
-    btns.forEach((b) => (b.disabled = false));
+    $("export").disabled = false;
   }
 }
-$("export").onclick = () => doExport([["exGif", "gif"], ["exMp4", "mp4"], ["exWebm", "webm"]].filter(([id]) => $(id).checked).map(([, f]) => f));
-$("exportPng").onclick = () => doExport([]);
+$("export").onclick = doExport;
+$("openExports").onclick = () => api("/api/open-exports", { method: "POST" });
+
+// ---------- settings: export folder, copy toggle ----------
+function showSettings() {
+  $("exportMode").value = settings.exportMode; syncSegs();
+  $("exportPath").textContent = settings.exportPath;
+  $("exportPath").title = settings.exportPath;
+  $("copyImports").checked = !!settings.copyImports;
+}
+async function putSettings(patch) { settings = await api("/api/settings", { method: "PUT", json: patch }); showSettings(); }
+$("exportMode").addEventListener("change", async () => {
+  const mode = $("exportMode").value;
+  if (mode === "custom") {
+    toast("Choose the export folder in the window that just opened…", false, 0);
+    const { picked } = await api("/api/settings/pick-export-dir", { method: "POST" });
+    toast(picked ? "Export folder set" : "Export folder unchanged");
+    settings = await api("/api/settings");
+    showSettings();
+  } else putSettings({ exportMode: mode });
+});
+$("copyImports").addEventListener("change", () => putSettings({ copyImports: $("copyImports").checked }));
+
+// ---------- dialogs ----------
+function ask({ title, text = "", ok = "OK", danger = false, input = null }) {
+  const d = $("askDlg");
+  $("askTitle").textContent = title; $("askText").textContent = text;
+  $("askOk").textContent = ok; $("askOk").className = danger ? "danger-solid" : "primary";
+  $("askInput").hidden = input === null; $("askInput").value = input ?? "";
+  d.showModal();
+  if (input !== null) { $("askInput").focus(); $("askInput").select(); }
+  // resolve from the buttons themselves rather than the dialog's async "close" event
+  return new Promise((res) => {
+    const done = (v) => { d.close(); $("askOk").onclick = $("askCancel").onclick = d.oncancel = null; res(v); };
+    $("askOk").onclick = (e) => { e.preventDefault(); done(input !== null ? $("askInput").value.trim() : true); };
+    $("askCancel").onclick = (e) => { e.preventDefault(); done(null); };
+    d.oncancel = (e) => { e.preventDefault(); done(null); }; // Escape
+  });
+}
+$("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("askOk").click(); } });
+
+// ---------- projects ----------
+function resetEditor() {
+  if (playing) togglePlay();
+  setBlink(false);
+  undoStack.length = 0; redoStack.length = 0; lastKey = null;
+  images.clear(); cur = 0; lastBadges = null;
+}
+async function openProject(id) {
+  if (saveTimer) await flushSave();
+  const next = normalize(await api(`/api/p/${id}`)); // swap only once loaded, so nothing renders old frames under the new id
+  resetEditor();
+  pid = id; project = next;
+  settings.lastProject = id;
+  $("projName").textContent = project.name || "Untitled";
+  $("fps").value = project.fps;
+  $("loop").value = project.loop; $("background").value = project.background;
+  $("exportState").textContent = ""; $("openExports").hidden = true;
+  buildTimeline(); updatePanel(); go(0);
+  if (project.canvas) { syncCanvas(); fit(); } // after the timeline exists, so the stage has its final size
+  syncFps(); syncSegs(); fillRanges(); render();
+  status("Loaded", "ok");
+}
+async function newProject(name) {
+  const { id } = await api("/api/projects", { method: "POST", json: { name } });
+  await openProject(id);
+}
+async function buildProjMenu() {
+  const list = await api("/api/projects"), box = $("projList");
+  box.textContent = "";
+  for (const p of list) {
+    const b = document.createElement("button");
+    b.className = "pmItem" + (p.id === pid ? " on" : "");
+    const name = document.createElement("b"); name.textContent = p.name;
+    const meta = document.createElement("span");
+    meta.textContent = `${p.frames} frame${p.frames === 1 ? "" : "s"} · ${new Date(p.updated * 1000).toLocaleString()}`;
+    b.append(name, meta);
+    b.onclick = () => { closeProjMenu(); if (p.id !== pid) openProject(p.id); };
+    box.append(b);
+  }
+  $("projDeleteOthers").disabled = list.length < 2;
+}
+function closeProjMenu() { $("projMenu").hidden = true; }
+$("projBtn").onclick = async (e) => {
+  e.stopPropagation();
+  if (!$("projMenu").hidden) return closeProjMenu();
+  await flushSave();
+  await buildProjMenu();
+  $("projMenu").hidden = false;
+};
+document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#projWrap")) closeProjMenu(); });
+$("projNew").onclick = async () => {
+  closeProjMenu();
+  const name = await ask({ title: "New project", text: "Name it after the animation you're making.", ok: "Create", input: "Untitled" });
+  if (name !== null) newProject(name || "Untitled");
+};
+$("projRename").onclick = async () => {
+  closeProjMenu();
+  const name = await ask({ title: "Rename project", ok: "Rename", input: project.name || "Untitled" });
+  if (!name) return;
+  project.name = name; $("projName").textContent = name; save();
+};
+$("projClear").onclick = async () => {
+  closeProjMenu();
+  const ok = await ask({ title: `Clear "${project.name}"?`, danger: true, ok: "Clear",
+    text: "Removes all frames, alignment, markers and canvas size from this project so you can start again. Your original images stay where they are; only copies the app made are deleted. This can't be undone." });
+  if (!ok) return;
+  clearTimeout(saveTimer); saveTimer = 0;
+  await api(`/api/p/${pid}/clear`, { method: "POST" });
+  await openProject(pid);
+  toast("Project cleared");
+};
+$("projDelete").onclick = async () => {
+  closeProjMenu();
+  const ok = await ask({ title: `Delete "${project.name}"?`, danger: true, ok: "Delete",
+    text: "Deletes this project's settings and any copies the app made. Your original images are not touched. This can't be undone." });
+  if (!ok) return;
+  clearTimeout(saveTimer); saveTimer = 0;
+  await api(`/api/p/${pid}/delete`, { method: "POST" });
+  pid = null;
+  const list = await api("/api/projects");
+  if (list.length) await openProject(list[0].id); else await newProject("Untitled");
+  toast("Project deleted");
+};
+$("projDeleteOthers").onclick = async () => {
+  closeProjMenu();
+  const n = (await api("/api/projects")).length - 1;
+  const ok = await ask({ title: `Delete ${n} other project${n === 1 ? "" : "s"}?`, danger: true, ok: "Delete all others",
+    text: `Keeps "${project.name}" and deletes every other project. Original images are not touched. This can't be undone.` });
+  if (!ok) return;
+  await api("/api/projects/delete-others", { method: "POST", json: { keep: pid } });
+  toast(`Deleted ${n} project${n === 1 ? "" : "s"}`);
+};
 
 // ---------- keyboard ----------
 // Click/change on buttons, checkboxes, selects and sliders shouldn't keep focus, or Space/arrows would hit them.
@@ -838,11 +999,9 @@ addEventListener("pointerdown", () => { clearTimeout(tipTimer); tip.hidden = tru
 
 // ---------- load ----------
 (async () => {
-  project = normalize(await (await fetch("/api/project")).json());
-  $("fps").value = project.fps; $("fpsVal").textContent = project.fps;
-  $("loop").value = project.loop; $("background").value = project.background;
-  buildTimeline(); updatePanel(); go(0);
-  if (project.canvas) { syncCanvas(); fit(); } // after the timeline exists, so the stage has its final size
-  syncFps(); syncSegs();
-  status("Loaded", "ok");
+  settings = await api("/api/settings");
+  showSettings();
+  const list = await api("/api/projects");
+  const last = list.find((p) => p.id === settings.lastProject) || list[0];
+  if (last) await openProject(last.id); else await newProject("Untitled");
 })();

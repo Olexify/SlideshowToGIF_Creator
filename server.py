@@ -1,28 +1,37 @@
 """Frame alignment workstation: local server.
 
-Usage: python server.py [project_dir] [--port 8765] [--no-browser]
+Usage: python server.py [--port 8765] [--no-browser] [--data DIR]
 
-project_dir layout:
-  frames/          source PNGs (never modified)
-  project.json     transforms, order, durations (autosaved by the editor)
-  output/aligned/  aligned PNG sequence (written on export)
-  output/anim.*    encoded GIF / MP4 / WebM
+Images are linked from wherever they are on disk; nothing is copied unless "Keep copies" is on.
+The only exceptions are files that have no disk path the browser can tell us about (dropped files)
+and files the app generates itself (split sprite sheets).
+
+DATA (default: this folder):
+  settings.json                 export folder, copy toggle, last project
+  projects/<id>/project.json    name, canvas, fps, frames[{file,x,y,scale,rotation,duration}], ...
+  projects/<id>/files/          copies (dropped / generated / "keep copies"); absent if none
+  exports/                      used when the export folder is set to "App folder"
 """
 import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 STATIC = Path(__file__).parent / "static"
+DATA = Path(__file__).parent
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 mimetypes.add_type("image/svg+xml", ".svg")
+mimetypes.add_type("image/webp", ".webp")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 FORMATS = {
     "gif": ["-fps_mode", "vfr", "-vf", "split[a][b];[a]palettegen=reserve_transparent=1[p];[b][p]paletteuse", "-loop", "0"],
@@ -30,54 +39,204 @@ FORMATS = {
     "mp4": ["-vf", "fps=60,pad=ceil(iw/2)*2:ceil(ih/2)*2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16"],
     "webm": ["-vf", "fps=60", "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-b:v", "0", "-crf", "20"],
 }
+DEFAULT_SETTINGS = {"exportMode": "downloads", "exportCustom": "", "copyImports": False, "lastProject": "", "lastDir": ""}
+LOCK = threading.Lock()      # settings / project-list writes
+TK_LOCK = threading.Lock()   # one native dialog at a time
+LINKED = {}                  # project id -> paths picked this session (allowed before the first autosave lands)
 
 
+# ---------- helpers ----------
 def natural_key(s):
-    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(s))]
 
 
-def list_frames(root):
-    d = root / "frames"
-    if not d.is_dir():
-        return []
-    return sorted((f"frames/{p.name}" for p in d.iterdir() if p.suffix.lower() in IMAGE_EXT), key=natural_key)
+def safe_name(name, fallback="frame.png"):
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", os.path.basename(name)).strip(" .")
+    return name or fallback
 
 
-def safe_name(name):
-    name = re.sub(r"[^\w.\- ]", "_", os.path.basename(name)).strip(" .")
-    return name or "frame.png"
+def unique(path):
+    """path, or 'name (2).ext' style variant that doesn't exist yet: never overwrite user files."""
+    p, n = Path(path), 2
+    while p.exists():
+        p = Path(path).with_name(f"{Path(path).stem} ({n}){Path(path).suffix}")
+        n += 1
+    return p
 
 
 def write_json_atomic(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 
 
-def encode(root, sequence, fmt):
-    """sequence: [{"i": 1-based aligned frame index, "duration": ms}] -> output/anim.<fmt>"""
-    aligned = root / "output" / "aligned"
+def read_json(path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def settings():
+    return {**DEFAULT_SETTINGS, **read_json(DATA / "settings.json", {})}
+
+
+def save_settings(patch):
+    with LOCK:
+        s = {**settings(), **{k: v for k, v in patch.items() if k in DEFAULT_SETTINGS}}
+        write_json_atomic(DATA / "settings.json", s)
+        return s
+
+
+def export_dir(s=None):
+    s = s or settings()
+    if s["exportMode"] == "custom" and s["exportCustom"]:
+        return Path(s["exportCustom"])
+    if s["exportMode"] == "app":
+        return DATA / "exports"
+    return Path.home() / "Downloads"
+
+
+def pdir(pid):
+    if not re.fullmatch(r"[a-z0-9]{6,32}", pid or ""):
+        raise KeyError("bad project id")
+    return DATA / "projects" / pid
+
+
+def load_project(pid):
+    p = pdir(pid) / "project.json"
+    if not p.exists():
+        raise KeyError("no such project")
+    return read_json(p, {"frames": []})
+
+
+def list_projects():
+    out = []
+    for d in (DATA / "projects").glob("*/project.json"):
+        p = read_json(d, {})
+        out.append({"id": d.parent.name, "name": p.get("name") or "Untitled", "frames": len(p.get("frames", [])),
+                    "updated": d.stat().st_mtime})
+    return sorted(out, key=lambda p: -p["updated"])
+
+
+def create_project(name):
+    pid = secrets.token_hex(5)
+    write_json_atomic(pdir(pid) / "project.json", {"name": name or "Untitled", "frames": []})
+    return pid
+
+
+def resolve_image(pid, f):
+    """Disk path for a frame entry: absolute = linked original, relative = copy inside the project folder.
+    Only paths that belong to the project (or were picked this session) are served."""
+    if Path(f).suffix.lower() not in IMAGE_EXT:
+        raise KeyError("not an image")
+    if os.path.isabs(f):
+        allowed = {x.get("file") for x in load_project(pid).get("frames", [])} | LINKED.get(pid, set())
+        if f not in allowed:
+            raise KeyError("not part of this project")
+        return Path(f)
+    base = pdir(pid).resolve()
+    p = (base / f).resolve()
+    if base not in p.parents:
+        raise KeyError("outside project")
+    return p
+
+
+def copy_into(pid, src_name, data=None, src_path=None):
+    d = pdir(pid) / "files"
+    d.mkdir(parents=True, exist_ok=True)
+    dst = unique(d / safe_name(src_name))
+    if src_path:
+        shutil.copy2(src_path, dst)
+    else:
+        dst.write_bytes(data)
+    return f"files/{dst.name}"
+
+
+def native_pick(folder, initial):
+    """Windows/macOS/Linux file dialog via tkinter (stdlib). Returns absolute paths, natural-sorted."""
+    import tkinter
+    from tkinter import filedialog
+    with TK_LOCK:
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        root.update()
+        try:
+            if folder:
+                d = filedialog.askdirectory(parent=root, title="Add all images in a folder", initialdir=initial or None)
+                files = [str(p) for p in Path(d).iterdir() if p.suffix.lower() in IMAGE_EXT] if d else []
+            else:
+                files = list(filedialog.askopenfilenames(parent=root, title="Add frames", initialdir=initial or None,
+                                                         filetypes=[("Images", "*.png *.jpg *.jpeg *.webp")]))
+        finally:
+            root.destroy()
+    return sorted((os.path.normpath(f) for f in files), key=lambda p: natural_key(Path(p).name))
+
+
+def native_pick_dir(title, initial):
+    import tkinter
+    from tkinter import filedialog
+    with TK_LOCK:
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        root.update()
+        try:
+            d = filedialog.askdirectory(parent=root, title=title, initialdir=initial or None)
+        finally:
+            root.destroy()
+    return os.path.normpath(d) if d else ""
+
+
+def open_folder(path):
+    if os.name == "nt":
+        os.startfile(path)
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+
+
+def encode(src, sequence, fmt, out):
+    """Encode src/frame_0001.png… into out. sequence: [{"i": 1-based frame index, "duration": ms}]."""
     lines, secs = [], [max(float(s["duration"]), 10) / 1000 for s in sequence]
     for s, d in zip(sequence, secs):
         # framerate 1000 = 1 ms timebase; image2's default 25 fps would quantize durations to 40 ms
         lines += [f"file 'frame_{int(s['i']):04d}.png'", "option framerate 1000", f"duration {d:.4f}"]
     lines += lines[-3:-1]  # repeat last file so its duration is honoured
-    (aligned / "list.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    out = root / "output" / f"anim.{fmt}"
+    (src / "list.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     # the muxers don't know the last frame's length on their own: cap it explicitly
     end = (["-frames:v", str(len(sequence)), "-final_delay", str(round(secs[-1] * 100))] if fmt == "gif"
            else ["-t", f"{sum(secs):.4f}"])
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0",
-           "-i", str(aligned / "list.txt"), *FORMATS[fmt], *end, str(out)]
+           "-i", str(src / "list.txt"), *FORMATS[fmt], *end, str(out)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
         raise RuntimeError(r.stderr.strip() or f"ffmpeg failed ({fmt})")
     return out
 
 
-class Handler(SimpleHTTPRequestHandler):
-    root: Path  # project dir, set in main()
+def migrate_old_project():
+    """v1 kept a single ./project folder with copies in frames/: turn it into a normal project."""
+    old = DATA / "project"
+    if not (old / "project.json").exists() or (DATA / "projects").exists():
+        return
+    pid = secrets.token_hex(5)
+    shutil.move(str(old), str(pdir(pid)))
+    d = pdir(pid)
+    if (d / "frames").exists():
+        (d / "frames").rename(d / "files")
+    shutil.rmtree(d / "output", ignore_errors=True)
+    p = read_json(d / "project.json", {"frames": []})
+    p["name"] = p.get("name") or "My first project"
+    for f in p.get("frames", []):
+        if f.get("file", "").startswith("frames/"):
+            f["file"] = "files/" + f["file"][len("frames/"):]
+    write_json_atomic(d / "project.json", p)
 
+
+# ---------- HTTP ----------
+class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
@@ -92,80 +251,161 @@ class Handler(SimpleHTTPRequestHandler):
     def body(self):
         return self.rfile.read(int(self.headers.get("Content-Length", 0)))
 
-    def serve_file(self, base, rel):
-        base = base.resolve()
-        p = (base / unquote(rel)).resolve()
-        if base not in p.parents or not p.is_file():
+    def jbody(self):
+        return json.loads(self.body() or b"{}")
+
+    def send_path(self, p):
+        if not p.is_file():
             return self.send_error(404)
-        ctype = self.guess_type(str(p))
         data = p.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Type", self.guess_type(str(p)))
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(data)
 
-    def do_GET(self):
-        url = urlparse(self.path)
-        if url.path == "/favicon.ico":
-            return self.serve_file(STATIC, "icon.ico")
-        if url.path == "/":
-            return self.serve_file(STATIC, "index.html")
-        if url.path.startswith("/static/"):
-            return self.serve_file(STATIC, url.path[len("/static/"):])
-        if url.path.startswith("/p/"):
-            return self.serve_file(self.root, url.path[len("/p/"):])
-        if url.path == "/api/project":
-            pj = self.root / "project.json"
-            if pj.exists():
-                return self.send_json(json.loads(pj.read_text(encoding="utf-8")))
-            return self.send_json({"frames": [{"file": f} for f in list_frames(self.root)]})
-        if url.path == "/api/files":
-            return self.send_json(list_frames(self.root))
-        self.send_error(404)
+    def serve_static(self, rel):
+        base = STATIC.resolve()
+        p = (base / unquote(rel)).resolve()
+        return self.send_path(p) if base in p.parents else self.send_error(404)
 
-    def do_PUT(self):
-        if urlparse(self.path).path != "/api/project":
-            return self.send_error(404)
-        data = json.loads(self.body())
-        if not isinstance(data, dict) or not isinstance(data.get("frames"), list):
-            return self.send_json({"error": "bad project"}, 400)
-        write_json_atomic(self.root / "project.json", data)
-        self.send_json({"ok": True})
+    def trusted(self):
+        # Only our own page may call the API: a localhost Host header (blocks DNS rebinding) and, for anything
+        # that changes state, a custom header that other websites can't send without a CORS preflight we never allow.
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
+        if host not in ("127.0.0.1", "localhost"):
+            return False
+        return self.command == "GET" or self.headers.get("X-Frame-Aligner") == "1"
 
-    def do_POST(self):
+    def handle_one(self):
         url = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
-        try:
-            if url.path == "/api/upload":
-                d = self.root / "frames"
-                d.mkdir(parents=True, exist_ok=True)
-                name = safe_name(q.get("name", "frame.png"))
-                stem, ext = os.path.splitext(name)
-                if ext.lower() not in IMAGE_EXT:
-                    return self.send_json({"error": f"unsupported type: {name}"}, 400)
-                p, n = d / name, 1
-                while p.exists():  # never overwrite an existing source frame
-                    p, n = d / f"{stem}_{n}{ext}", n + 1
-                p.write_bytes(self.body())
-                return self.send_json({"file": f"frames/{p.name}"})
-            if url.path == "/api/export/frame":
-                i = int(q["i"])
-                d = self.root / "output" / "aligned"
-                if i == 1 and d.exists():
-                    shutil.rmtree(d)
-                d.mkdir(parents=True, exist_ok=True)
-                (d / f"frame_{i:04d}.png").write_bytes(self.body())
+        parts = [unquote(x) for x in url.path.strip("/").split("/")]
+        m = self.command
+        if m == "GET" and url.path in ("/", "/index.html"):
+            return self.serve_static("index.html")
+        if m == "GET" and url.path == "/favicon.ico":
+            return self.serve_static("icon.ico")
+        if m == "GET" and parts[0] == "static":
+            return self.serve_static("/".join(parts[1:]))
+        if parts[0] != "api":
+            return self.send_error(404)
+        if not self.trusted():
+            return self.send_json({"error": "forbidden"}, 403)
+        route = parts[1:]
+
+        if route == ["settings"]:
+            if m == "PUT":
+                save_settings(self.jbody())
+            s = settings()
+            return self.send_json({**s, "exportPath": str(export_dir(s)),
+                                   "downloads": str(Path.home() / "Downloads"), "appExports": str(DATA / "exports")})
+        if route == ["settings", "pick-export-dir"] and m == "POST":
+            d = native_pick_dir("Export folder", settings()["exportCustom"])
+            if d:
+                save_settings({"exportMode": "custom", "exportCustom": d})
+            return self.send_json({"picked": d})
+        if route == ["open-exports"] and m == "POST":
+            d = export_dir()
+            d.mkdir(parents=True, exist_ok=True)
+            open_folder(d)
+            return self.send_json({"ok": True})
+
+        if route == ["projects"]:
+            if m == "POST":
+                pid = create_project(self.jbody().get("name", "").strip()[:80])
+                save_settings({"lastProject": pid})
+                return self.send_json({"id": pid})
+            return self.send_json(list_projects())
+        if route == ["projects", "delete-others"] and m == "POST":
+            keep = self.jbody().get("keep")
+            for p in list_projects():
+                if p["id"] != keep:
+                    shutil.rmtree(pdir(p["id"]), ignore_errors=True)
+            return self.send_json({"ok": True})
+
+        if len(route) >= 2 and route[0] == "p":
+            pid, rest = route[1], route[2:]
+            d = pdir(pid)
+            if rest == [] and m == "GET":
+                save_settings({"lastProject": pid})
+                return self.send_json(load_project(pid))
+            if rest == [] and m == "PUT":
+                data = self.jbody()
+                if not isinstance(data, dict) or not isinstance(data.get("frames"), list):
+                    return self.send_json({"error": "bad project"}, 400)
+                load_project(pid)  # must exist (deleted in another tab -> don't resurrect it)
+                write_json_atomic(d / "project.json", data)
                 return self.send_json({"ok": True})
-            if url.path == "/api/export/encode":
-                req = json.loads(self.body())
-                outs = [encode(self.root, req["sequence"], f).relative_to(self.root).as_posix()
-                        for f in req["formats"] if f in FORMATS]
-                return self.send_json({"outputs": outs})
+            if rest == ["delete"] and m == "POST":
+                shutil.rmtree(d, ignore_errors=True)  # only the project folder: linked originals are never touched
+                return self.send_json({"ok": True})
+            if rest == ["clear"] and m == "POST":
+                p = load_project(pid)
+                shutil.rmtree(d / "files", ignore_errors=True)
+                write_json_atomic(d / "project.json", {"name": p.get("name", "Untitled"), "frames": [],
+                                                       "fps": p.get("fps", 12), "loop": p.get("loop", "loop"),
+                                                       "background": p.get("background", "clamp")})
+                return self.send_json({"ok": True})
+            if rest == ["img"] and m == "GET":
+                return self.send_path(resolve_image(pid, q.get("f", "")))
+            if rest == ["upload"] and m == "POST":  # dropped/generated files: no disk path known -> copy
+                name = safe_name(q.get("name", "frame.png"))
+                if Path(name).suffix.lower() not in IMAGE_EXT:
+                    return self.send_json({"error": f"unsupported type: {name}"}, 400)
+                load_project(pid)
+                return self.send_json({"file": copy_into(pid, name, data=self.body())})
+            if rest == ["pick"] and m == "POST":
+                load_project(pid)
+                req, s = self.jbody(), settings()
+                paths = native_pick(bool(req.get("folder")), s["lastDir"])
+                if not paths:
+                    return self.send_json({"files": []})
+                save_settings({"lastDir": str(Path(paths[0]).parent)})
+                if s["copyImports"]:
+                    files = [copy_into(pid, Path(p).name, src_path=p) for p in paths]
+                else:
+                    LINKED.setdefault(pid, set()).update(paths)
+                    files = paths
+                return self.send_json({"files": files})
+            if rest == ["export", "frame"] and m == "POST":
+                i, r = int(q["i"]), d / "render"
+                if i == 1:
+                    shutil.rmtree(r, ignore_errors=True)
+                r.mkdir(parents=True, exist_ok=True)
+                (r / f"frame_{i:04d}.png").write_bytes(self.body())
+                return self.send_json({"ok": True})
+            if rest == ["export", "finish"] and m == "POST":
+                req, r = self.jbody(), d / "render"
+                out_dir = export_dir()
+                out_dir.mkdir(parents=True, exist_ok=True)
+                base = safe_name(load_project(pid).get("name") or "animation", "animation")
+                outs = []
+                try:
+                    for f in req.get("formats", []):
+                        if f in FORMATS:
+                            outs.append(str(encode(r, req["sequence"], f, unique(out_dir / f"{base}.{f}"))))
+                    if req.get("png"):
+                        seq_dir = unique(out_dir / f"{base} frames")
+                        seq_dir.mkdir(parents=True)
+                        for p in sorted(r.glob("frame_*.png")):
+                            shutil.copy2(p, seq_dir / p.name)
+                        outs.append(str(seq_dir))
+                finally:
+                    shutil.rmtree(r, ignore_errors=True)  # renders are temporary
+                return self.send_json({"outputs": outs, "dir": str(out_dir)})
+        return self.send_error(404)
+
+    def dispatch(self):
+        try:
+            self.handle_one()
+        except KeyError as e:
+            self.send_json({"error": str(e.args[0] if e.args else e)}, 404)
         except Exception as e:  # report to the UI instead of dropping the connection
-            return self.send_json({"error": str(e)}, 500)
-        self.send_error(404)
+            self.send_json({"error": str(e)}, 500)
+
+    do_GET = do_PUT = do_POST = dispatch
 
 
 class Server(ThreadingHTTPServer):
@@ -174,13 +414,13 @@ class Server(ThreadingHTTPServer):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 8765
-    if "--port" in sys.argv:
-        args.remove(str(port))
-    root = Path(args[0] if args else "project").resolve()
-    (root / "frames").mkdir(parents=True, exist_ok=True)
-    Handler.root = root
+    global DATA
+    arg = lambda k, d: sys.argv[sys.argv.index(k) + 1] if k in sys.argv else d
+    port = int(arg("--port", 8765))
+    DATA = Path(arg("--data", DATA)).resolve()
+    (DATA / "projects").parent.mkdir(parents=True, exist_ok=True)
+    migrate_old_project()
+    (DATA / "projects").mkdir(exist_ok=True)
     for port in range(port, port + 20):  # another editor already running? take the next free port
         try:
             srv = Server(("127.0.0.1", port), Handler)
@@ -190,7 +430,7 @@ def main():
     else:
         sys.exit("No free port found")
     url = f"http://127.0.0.1:{port}/"
-    print(f"Project: {root}\nEditor:  {url}")
+    print(f"Data:   {DATA}\nEditor: {url}", flush=True)
     if "--no-browser" not in sys.argv:
         webbrowser.open(url)
     srv.serve_forever()
