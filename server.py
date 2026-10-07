@@ -9,6 +9,7 @@ project_dir layout:
   output/anim.*    encoded GIF / MP4 / WebM
 """
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -20,6 +21,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 STATIC = Path(__file__).parent / "static"
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("image/svg+xml", ".svg")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 FORMATS = {
     "gif": ["-fps_mode", "vfr", "-vf", "split[a][b];[a]palettegen=reserve_transparent=1[p];[b][p]paletteuse", "-loop", "0"],
@@ -105,6 +108,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         url = urlparse(self.path)
+        if url.path == "/favicon.ico":
+            return self.serve_file(STATIC, "icon.ico")
         if url.path == "/":
             return self.serve_file(STATIC, "index.html")
         if url.path.startswith("/static/"):

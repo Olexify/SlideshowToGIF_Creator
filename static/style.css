@@ -74,7 +74,7 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 /* ---------- toolbar ---------- */
 #toolbar { grid-area: tool; display: flex; gap: 8px; align-items: center; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: .01em; margin-right: 10px; }
-.logo { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, var(--accent), #b07bff); box-shadow: 4px 4px 0 -1px rgba(255,180,74,.6); }
+.logo { width: 22px; height: 22px; }
 
 /* ---------- stage ---------- */
 #stage { grid-area: stage; position: relative; overflow: hidden; background: var(--stage);

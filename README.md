@@ -11,6 +11,9 @@ Requires Python 3.9+ and `ffmpeg` on PATH. There are no pip dependencies.
 python server.py [project_dir]      # default: ./project, opens http://127.0.0.1:8765/
 ```
 
+**App icon:** run `make_shortcut.bat` once to get a "Frame Aligner" shortcut with the app icon on your desktop.
+In Chrome or Edge you can also use **Install app** in the address bar to open the editor in its own window with the icon.
+
 To add frames, drop several images anywhere on the window at once, or use **Add frames**. Drop onto a thumbnail
 to insert the images before it. Frames are copied into
 `project_dir/frames/` and placed in natural filename order (`frame_001`, `frame_001_5`, `frame_002`, …).

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b9cff"/><stop offset="1" stop-color="#b07bff"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#16171b"/>
+  <!-- back frame (reference, onion skin) -->
+  <rect x="21" y="21" width="31" height="31" rx="6" fill="none" stroke="#ffb44a" stroke-width="4" opacity=".9"/>
+  <!-- front frame (current) -->
+  <rect x="12" y="12" width="31" height="31" rx="6" fill="url(#g)"/>
+  <!-- alignment crosshair -->
+  <path d="M27.5 19v17M19 27.5h17" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+</svg>
