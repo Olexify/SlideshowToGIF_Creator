@@ -11,7 +11,8 @@ Requires Python 3.9+ and `ffmpeg` on PATH. There are no pip dependencies.
 python server.py [project_dir]      # default: ./project, opens http://127.0.0.1:8765/
 ```
 
-To add frames, drop several images onto the window at once, or use **+ Add frames**. They are copied into
+To add frames, drop several images anywhere on the window at once, or use **Add frames**. Drop onto a thumbnail
+to insert the images before it. Frames are copied into
 `project_dir/frames/` and placed in natural filename order (`frame_001`, `frame_001_5`, `frame_002`, …).
 Images you copy into that folder yourself are picked up with **Rescan folder**.
 

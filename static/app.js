@@ -52,10 +52,18 @@ function img(file) {
   return im;
 }
 
+// ---------- status / toast ----------
+function status(text, cls = "") { $("saveState").textContent = text; $("saveState").className = "pill " + cls; }
+let toastTimer = 0;
+function toast(text, err = false, ms = 2500) {
+  const t = $("toast"); t.textContent = text; t.className = err ? "err" : ""; t.hidden = false;
+  clearTimeout(toastTimer); if (ms) toastTimer = setTimeout(() => (t.hidden = true), ms);
+}
+
 // ---------- save (debounced) ----------
 let saveTimer = 0;
 function save() {
-  $("saveState").textContent = "Unsaved…";
+  status("Unsaved…");
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushSave, 400);
 }
@@ -64,9 +72,9 @@ async function flushSave(keepalive = false) {
   try {
     const r = await fetch("/api/project", { method: "PUT", body: JSON.stringify(project), keepalive });
     if (!r.ok) throw new Error(r.status);
-    $("saveState").textContent = "Saved";
+    status("Saved", "ok");
   } catch (e) {
-    $("saveState").textContent = "SAVE FAILED – retrying";
+    status("Save failed, retrying…", "err");
     saveTimer = setTimeout(flushSave, 2000);
   }
 }
@@ -119,7 +127,7 @@ function render() {
   requestAnimationFrame(() => { rafPending = false; draw(); });
 }
 
-let checker;
+let checker, lastBadges = null;
 function draw() {
   const dpr = devicePixelRatio || 1;
   const cw = view.clientWidth, ch = view.clientHeight;
@@ -191,6 +199,11 @@ function draw() {
     });
   }
   $("zoomVal").textContent = Math.round(zoom * 100) + "%";
+  const badges = playing ? `<span class="badge">PLAYING</span>`
+    : (rf ? (blinkOn ? `<span class="badge ref">BLINK ${$("blinkMs").value}ms</span>` : "")
+      + (mode === "onion" ? `<span class="badge ref">ONION ${$("refOpacity").value}% · #${ri + 1}</span>`
+        : mode === "diff" ? `<span class="badge ref">DIFFERENCE · #${ri + 1}</span>` : "") : "");
+  if (badges !== lastBadges) $("hudBadges").innerHTML = lastBadges = badges; // built from numbers only
 }
 function marker(x, y) {
   vctx.beginPath(); vctx.arc(x, y, 6, 0, Math.PI * 2);
@@ -307,7 +320,8 @@ function updatePanel() {
   set("ts", f ? round(f.scale * 100, 4) : ""); set("tr", f ? f.rotation : "");
   set("dur", f?.duration ?? "");
   $("dur").placeholder = `auto (${Math.round(1000 / project.fps)})`;
-  $("frameLabel").textContent = f ? `${cur + 1} / ${project.frames.length} · ${f.file.split("/").pop()}` : "";
+  $("frameLabel").textContent = f ? `${cur + 1} / ${project.frames.length}` : "–";
+  $("hudName").textContent = f ? f.file.split("/").pop() : "";
   $("scrub").max = Math.max(0, project.frames.length - 1); $("scrub").value = cur;
 }
 const fieldMap = { tx: ["x", 1], ty: ["y", 1], ts: ["scale", 100], tr: ["rotation", 1] };
@@ -355,7 +369,11 @@ $("blink").addEventListener("change", () => setBlink($("blink").checked));
 $("blinkMs").addEventListener("input", () => { $("blinkMsVal").textContent = $("blinkMs").value + "ms"; if (blinkOn) setBlink(true); });
 
 // playback controls
-$("fps").addEventListener("input", () => { project.fps = +$("fps").value; $("fpsVal").textContent = project.fps; updatePanel(); save(); });
+function syncFps() {
+  $("fpsVal").textContent = project.fps;
+  for (const b of $("fpsPresets").children) b.classList.toggle("on", +b.textContent === project.fps);
+}
+$("fps").addEventListener("input", () => { project.fps = +$("fps").value; syncFps(); updatePanel(); refreshTimeline(); save(); });
 for (const v of [6, 8, 10, 12, 15, 24]) {
   const b = document.createElement("button"); b.textContent = v;
   b.onclick = () => { $("fps").value = v; $("fps").dispatchEvent(new Event("input")); };
@@ -369,10 +387,30 @@ $("markerTool").addEventListener("change", () => view.classList.toggle("marker",
 $("clearMarkers").onclick = () => { project.markers = []; render(); save(); };
 $("background").addEventListener("change", () => { project.background = $("background").value; render(); save(); });
 $("fit").onclick = fit;
+$("zoomIn").onclick = () => setZoom(viewport.zoom * 1.25, view.clientWidth / 2, view.clientHeight / 2);
+$("zoomOut").onclick = () => setZoom(viewport.zoom / 1.25, view.clientWidth / 2, view.clientHeight / 2);
 $("z100").onclick = () => setZoom(1, view.clientWidth / 2, view.clientHeight / 2, true);
 for (const id of ["cw", "ch"]) $(id).addEventListener("change", () => {
   const w = parseInt($("cw").value), h = parseInt($("ch").value);
   if (w > 0 && h > 0) { project.canvas = { width: w, height: h }; syncCanvas(); fit(); save(); }
+});
+
+// <select data-seg> renders as a segmented button row; the hidden select stays the source of truth.
+function syncSegs() {
+  document.querySelectorAll(".seg").forEach((seg) =>
+    [...seg.children].forEach((b) => b.classList.toggle("on", b.dataset.v === seg.sel.value)));
+}
+document.querySelectorAll("select[data-seg]").forEach((sel) => {
+  const seg = document.createElement("div");
+  seg.className = "seg"; seg.sel = sel;
+  for (const o of sel.options) {
+    const b = document.createElement("button");
+    b.textContent = o.text; b.dataset.v = o.value;
+    b.onclick = () => { sel.value = o.value; sel.dispatchEvent(new Event("change", { bubbles: true })); };
+    seg.append(b);
+  }
+  sel.hidden = true; sel.after(seg);
+  sel.addEventListener("change", syncSegs);
 });
 
 // ---------- navigation & playback ----------
@@ -392,8 +430,7 @@ function nextIndex() {
 }
 function togglePlay() {
   playing = !playing;
-  $("play").textContent = playing ? "❚❚ Pause" : "▶ Play";
-  $("play").classList.toggle("on", playing);
+  $("play").querySelector("use").setAttribute("href", playing ? "#i-pause" : "#i-play");
   clearTimeout(playTimer);
   if (playing) {
     project.frames.forEach((f) => img(f.file));
@@ -415,19 +452,30 @@ $("help").onclick = () => $("helpDlg").showModal();
 
 // ---------- timeline ----------
 let dragFrom = -1;
+const isFileDrag = (e) => e.dataTransfer?.types.includes("Files");
+function moveFrame(from, to) {
+  checkpoint();
+  const curFile = frame().file;
+  const [moved] = project.frames.splice(from, 1);
+  project.frames.splice(to, 0, moved);
+  cur = project.frames.findIndex((x) => x.file === curFile);
+  changed(true);
+}
 function buildTimeline() {
   const box = $("thumbs"); box.textContent = "";
   project.frames.forEach((f, i) => {
     const el = document.createElement("div");
     el.className = "thumb"; el.draggable = true;
-    el.innerHTML = `<img loading="lazy"><div class="name"></div>
-      <div class="meta"><input type="number" min="10" step="1" title="Duration (ms), empty = from FPS"><span class="muted">ms</span><span class="dirty" title="Has a transform">●</span></div>
+    el.innerHTML = `<div class="pic"><img loading="lazy"><span class="no"></span><span class="reftag">REF</span><span class="dirty" title="Aligned (has a transform)"></span></div>
+      <div class="name"></div>
+      <div class="meta"><input type="number" min="10" step="1" title="Hold duration in ms (empty = from FPS)"><span>ms</span></div>
       <button class="del" title="Remove from project (file is kept)">×</button>`;
     el.querySelector("img").src = urlOf(f.file);
-    el.querySelector(".name").textContent = `${i + 1}. ${stem(f.file)}`;
-    el.querySelector(".name").title = f.file;
+    el.querySelector(".no").textContent = i + 1;
+    el.querySelector(".name").textContent = stem(f.file);
+    el.title = f.file;
     const inp = el.querySelector("input");
-    inp.value = f.duration ?? ""; inp.placeholder = Math.round(1000 / project.fps);
+    inp.value = f.duration ?? "";
     inp.onclick = (e) => e.stopPropagation();
     inp.onchange = () => { checkpoint(); f.duration = Math.max(10, parseInt(inp.value)) || null; changed(true); };
     el.querySelector(".del").onclick = (e) => {
@@ -436,82 +484,114 @@ function buildTimeline() {
       changed(true);
     };
     el.onclick = () => { if (playing) togglePlay(); go(i); };
-    el.ondragstart = (e) => { dragFrom = i; e.dataTransfer.effectAllowed = "move"; };
-    el.ondragover = (e) => { if (dragFrom < 0) return; e.preventDefault(); el.classList.add("over"); };
-    el.ondragleave = () => el.classList.remove("over");
+    el.ondragstart = (e) => { dragFrom = i; e.dataTransfer.effectAllowed = "move"; el.classList.add("dragging"); };
+    el.ondragend = () => { dragFrom = -1; el.classList.remove("dragging"); };
+    el.ondragover = (e) => {
+      const files = isFileDrag(e);
+      if (dragFrom < 0 && !files) return;
+      e.preventDefault(); e.stopPropagation();
+      el.classList.add("over"); el.classList.toggle("dropfiles", files);
+    };
+    el.ondragleave = () => el.classList.remove("over", "dropfiles");
     el.ondrop = (e) => {
-      if (dragFrom < 0) return;
-      e.preventDefault(); e.stopPropagation(); el.classList.remove("over");
-      if (dragFrom !== i) {
-        checkpoint();
-        const curFile = frame().file;
-        const [moved] = project.frames.splice(dragFrom, 1);
-        project.frames.splice(i, 0, moved);
-        cur = project.frames.findIndex((x) => x.file === curFile);
-        changed(true);
-      }
+      e.preventDefault(); e.stopPropagation(); el.classList.remove("over", "dropfiles"); hideDrop();
+      if (isFileDrag(e)) return addFiles(e.dataTransfer.files, i); // insert before this frame
+      if (dragFrom >= 0 && dragFrom !== i) moveFrame(dragFrom, i);
       dragFrom = -1;
     };
-    el.ondragend = () => { dragFrom = -1; };
     box.append(el);
   });
+  // "+" tile: click to browse, drop files to append, drop a frame to move it to the end
+  const add = document.createElement("label");
+  add.className = "addtile";
+  add.innerHTML = `<svg><use href="#i-plus"/></svg>Add frames<input type="file" accept="image/png,image/jpeg,image/webp" multiple hidden class="fileInput2">`;
+  add.ondragover = (e) => { if (dragFrom < 0 && !isFileDrag(e)) return; e.preventDefault(); e.stopPropagation(); add.classList.add("dropfiles"); };
+  add.ondragleave = () => add.classList.remove("dropfiles");
+  add.ondrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); add.classList.remove("dropfiles"); hideDrop();
+    if (isFileDrag(e)) return addFiles(e.dataTransfer.files, project.frames.length);
+    if (dragFrom >= 0) moveFrame(dragFrom, project.frames.length - 1);
+    dragFrom = -1;
+  };
+  box.append(add);
   // reference frame list
   const sel = $("refFrame"), keep = sel.value || "prev";
   sel.innerHTML = `<option value="prev">Previous frame</option><option value="next">Next frame</option><option value="first">Frame 1</option>`;
-  project.frames.forEach((f, i) => sel.add(new Option(`${i + 1}. ${stem(f.file)}`, f.file)));
+  project.frames.forEach((f, i) => sel.add(new Option(`#${i + 1}  ${stem(f.file)}`, f.file)));
   sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "prev";
   refreshTimeline();
 }
 function refreshTimeline() {
-  const ri = refIndex();
-  [...$("thumbs").children].forEach((el, i) => {
+  const ri = refIndex(), auto = Math.round(1000 / project.fps);
+  $("thumbs").querySelectorAll(".thumb").forEach((el, i) => {
     el.classList.toggle("cur", i === cur);
     el.classList.toggle("ref", i === ri && $("refMode").value !== "off");
-    el.querySelector(".dirty").style.visibility = isIdentity(project.frames[i]) ? "hidden" : "visible";
+    el.querySelector(".dirty").hidden = isIdentity(project.frames[i]);
+    el.querySelector("input").placeholder = auto;
   });
   $("thumbs").children[cur]?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 // ---------- adding frames ----------
-// New files go before the first frame whose name sorts after them, so "frame_001_5" lands between 001 and 002.
+// Without a position, new files go before the first frame whose name sorts after them,
+// so "frame_001_5" lands between 001 and 002.
 const byName = (a, b) => stem(a).localeCompare(stem(b), undefined, { numeric: true });
-function insertSorted(file) {
+function insertFrame(file, at = null) {
   const f = normalize({ frames: [{ file }] }).frames[0];
-  const i = project.frames.findIndex((x) => byName(x.file, file) > 0);
-  if (i < 0) project.frames.push(f); else { project.frames.splice(i, 0, f); if (i <= cur) cur++; }
+  let i = at ?? project.frames.findIndex((x) => byName(x.file, file) > 0);
+  if (i < 0) i = project.frames.length;
+  project.frames.splice(i, 0, f);
+  if (i <= cur && project.frames.length > 1) cur++;
 }
-async function addFiles(files) {
-  files = [...files].filter((f) => /\.(png|jpe?g|webp)$/i.test(f.name))
+async function addFiles(files, at = null) {
+  const all = [...files];
+  files = all.filter((f) => /\.(png|jpe?g|webp)$/i.test(f.name))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  if (!files.length) return;
+  if (!files.length) return toast(all.length ? "Only PNG, JPG and WebP images can be added" : "Nothing to add", true);
   checkpoint();
-  for (const file of files) {
-    $("saveState").textContent = `Uploading ${file.name}…`;
-    const r = await fetch("/api/upload?name=" + encodeURIComponent(file.name), { method: "POST", body: file });
-    const j = await r.json();
-    if (j.file) insertSorted(j.file);
-    else alert(j.error);
+  const wasEmpty = !project.frames.length;
+  let added = 0;
+  for (const [n, file] of files.entries()) {
+    toast(`Adding ${n + 1} / ${files.length}: ${file.name}`, false, 0);
+    try {
+      const r = await fetch("/api/upload?name=" + encodeURIComponent(file.name), { method: "POST", body: file });
+      const j = await r.json();
+      if (!j.file) throw new Error(j.error);
+      insertFrame(j.file, at === null ? null : at++);
+      added++;
+    } catch (e) { toast(`${file.name}: ${e.message}`, true, 5000); }
   }
+  if (wasEmpty) cur = 0;
   changed(true);
+  if (added) toast(`Added ${added} frame${added > 1 ? "s" : ""}`);
 }
-$("fileInput").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
+document.addEventListener("change", (e) => {
+  if (e.target.matches("#fileInput, .fileInput2")) { addFiles(e.target.files); e.target.value = ""; }
+});
 $("rescan").onclick = async () => {
   const files = await (await fetch("/api/files")).json();
   const have = new Set(project.frames.map((f) => f.file));
   const add = files.filter((f) => !have.has(f));
-  if (!add.length) return;
+  if (!add.length) return toast("No new images in the frames folder");
   checkpoint();
-  add.forEach(insertSorted);
+  add.forEach((f) => insertFrame(f));
   changed(true);
+  toast(`Added ${add.length} frame${add.length > 1 ? "s" : ""} from folder`);
 };
+// Drop anywhere else in the window: add in filename order.
 let dropDepth = 0;
-const isFileDrag = (e) => e.dataTransfer?.types.includes("Files");
-addEventListener("dragenter", (e) => { if (isFileDrag(e)) { dropDepth++; $("drop").hidden = false; } });
-addEventListener("dragleave", (e) => { if (isFileDrag(e) && --dropDepth <= 0) { dropDepth = 0; $("drop").hidden = true; } });
+function hideDrop() { dropDepth = 0; $("drop").hidden = true; }
+addEventListener("dragenter", (e) => {
+  if (!isFileDrag(e)) return;
+  dropDepth++; $("drop").hidden = false;
+  const n = e.dataTransfer.items.length;
+  $("dropHint").textContent = (n ? `${n} file${n > 1 ? "s" : ""} · ` : "") + "or drop on a thumbnail to insert there";
+});
+addEventListener("dragleave", (e) => { if (isFileDrag(e) && --dropDepth <= 0) hideDrop(); });
 addEventListener("dragover", (e) => { if (isFileDrag(e)) e.preventDefault(); });
 addEventListener("drop", (e) => {
   if (!isFileDrag(e)) return;
-  e.preventDefault(); dropDepth = 0; $("drop").hidden = true;
+  e.preventDefault(); hideDrop();
   addFiles(e.dataTransfer.files);
 });
 
@@ -589,7 +669,7 @@ addEventListener("keydown", (e) => {
   else if ((k === "e" || k === "E") && has) rotate(0.1 * step);
   else if (k === "b" || k === "B") setBlink(!blinkOn);
   else if (k === "o" || k === "O") {
-    const s = $("refMode"); s.selectedIndex = (s.selectedIndex + 1) % s.options.length; refreshTimeline(); render();
+    const s = $("refMode"); s.selectedIndex = (s.selectedIndex + 1) % s.options.length; s.dispatchEvent(new Event("change"));
   } else if (k === "m" || k === "M") { $("markerTool").checked = !$("markerTool").checked; $("markerTool").dispatchEvent(new Event("change")); }
   else if (k === "f" || k === "F") fit();
   else if (k === "1") setZoom(1, view.clientWidth / 2, view.clientHeight / 2, true);
@@ -604,5 +684,6 @@ addEventListener("keydown", (e) => {
   $("loop").value = project.loop; $("background").value = project.background;
   if (project.canvas) { syncCanvas(); fit(); }
   buildTimeline(); updatePanel(); go(0);
-  $("saveState").textContent = "Loaded";
+  syncFps(); syncSegs();
+  status("Loaded", "ok");
 })();
