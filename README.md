@@ -1,4 +1,5 @@
 <img align="left" width="192" height="192" alt="image" src="https://github.com/user-attachments/assets/74a08819-c89f-4df1-bcfc-f87e72dc07a1" />
+
 # SlideshowToGIF Creator
 
 A local tool for reviewing AI-generated animation frames, lining them up by hand, and exporting GIF / MP4 / WebM.
