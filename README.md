@@ -102,7 +102,11 @@ If a single image contains a grid of animation frames:
 
 The preview shows each cell numbered in playback order.
 
-After splitting, the sheet moves to the **Processed** group at the end of the timeline.
+**Several sheets at once:** tick **Apply to all N images in the timeline** to cut every image with the same grid
+in one click. The result keeps timeline order: all cells of sheet 1 (row by row), then all of sheet 2, and so on.
+For example, 8 sheets of 4×2 become 64 frames. The option is preselected when all images are the same size.
+
+After splitting, the sheets move to the **Processed** group at the end of the timeline. One undo restores them.
 
 ---
 

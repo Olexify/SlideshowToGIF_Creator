@@ -53,6 +53,13 @@ const T = (f) => ({ x: f.x, y: f.y, scale: f.scale, rotation: f.rotation });
 const duration = (f) => f.duration || 1000 / project.fps;
 const isIdentity = (f) => f.x === 0 && f.y === 0 && f.scale === 1 && f.rotation === 0;
 
+// Resolves once an image is loaded. Not img.decode(): that never settles while the tab is hidden,
+// which would stall an export running in a background tab.
+const loaded = (im) => new Promise((res, rej) => {
+  if (im.complete) return im.naturalWidth ? res(im) : rej(new Error("can't load " + im.src));
+  im.addEventListener("load", () => res(im), { once: true });
+  im.addEventListener("error", () => rej(new Error("can't load " + im.src)), { once: true });
+});
 function img(file) {
   let im = images.get(file);
   if (!im) {
@@ -727,48 +734,91 @@ function drawSplitPreview() {
   });
   const r0 = rects[0];
   $("spInfo").textContent = r0.w < 1 || r0.h < 1 ? "Trim is larger than the cells."
-    : `${rects.length} frames of ${r0.w} × ${r0.h} px, numbered in playback order.`;
+    : `${rects.length} frames of ${r0.w} × ${r0.h} px per image, numbered in playback order.`;
   $("spGo").disabled = r0.w < 1 || r0.h < 1;
 }
 $("splitBtn").onclick = async () => {
   const f = frame(); if (!f) return;
   const im = img(f.file);
-  try { await im.decode(); } catch { return toast("Couldn't load " + f.file, true); }
+  try { await loaded(im); } catch { return toast("Couldn't load " + f.file, true); }
   if (!$("splitDlg").dataset.used) { // first use: guess a grid of roughly square cells, 2 rows for wide sheets
     const ratio = im.naturalWidth / im.naturalHeight;
     $("spRows").value = ratio > 1.3 ? 2 : ratio < 0.77 ? Math.round(2 / ratio) : 2;
     $("spCols").value = ratio > 1.3 ? Math.round(2 * ratio) : 2;
   }
-  $("spCanvas").checked = !project.canvas || (project.canvas.width === im.naturalWidth && project.canvas.height === im.naturalHeight);
+  $("spCanvas").checked = true;
+  // offer "all sheets" when there are several; preselect it if they're all the same size as this one
+  const n = project.frames.length;
+  $("spAllRow").hidden = n < 2;
+  $("spAllCount").textContent = n;
+  if (n > 1) {
+    const sizes = await Promise.all(project.frames.map((x) => { const i = img(x.file); return loaded(i).then(() => `${i.naturalWidth}x${i.naturalHeight}`, () => "?"); }));
+    $("spAll").checked = sizes.every((z) => z === `${im.naturalWidth}x${im.naturalHeight}`);
+  }
   drawSplitPreview();
   $("splitDlg").showModal();
 };
 for (const id of ["spCols", "spRows", "spTrim"]) $(id).addEventListener("input", drawSplitPreview);
-$("spGo").onclick = async () => {
-  $("splitDlg").dataset.used = 1;
-  const f = frame(), im = img(f.file), at = cur;
+// Cut one sheet into cell files, row by row (top-left → top-right, then the next row).
+async function cutSheet(f, im, progress) {
   const rects = cellRects(im.naturalWidth, im.naturalHeight, splitIn());
   const c = document.createElement("canvas"); c.width = rects[0].w; c.height = rects[0].h;
-  const g = c.getContext("2d"), pad = String(rects.length).length < 2 ? 2 : String(rects.length).length;
+  const g = c.getContext("2d"), pad = Math.max(2, String(rects.length).length);
   const files = [];
-  $("spGo").disabled = true;
   for (const [i, r] of rects.entries()) {
-    $("spInfo").textContent = `Cutting frame ${i + 1} / ${rects.length}…`;
+    progress(i + 1, rects.length);
     g.clearRect(0, 0, c.width, c.height);
     g.drawImage(im, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
     const blob = await new Promise((res) => c.toBlob(res, "image/png"));
     files.push(new File([blob], `${stem(f.file)}_${String(i + 1).padStart(pad, "0")}.png`, { type: "image/png" }));
   }
-  $("splitDlg").close();
-  checkpoint(); // one undo step restores the sheet
-  if ($("spRemove").checked) {
-    project.frames.splice(at, 1); project.processed.push({ file: f.file });
-    cur = Math.max(0, Math.min(cur, project.frames.length - 1));
+  return { files, w: c.width, h: c.height };
+}
+$("spGo").onclick = async () => {
+  $("splitDlg").dataset.used = 1;
+  $("spGo").disabled = true;
+  if (playing) togglePlay();
+  // all sheets in timeline order, or just the current one
+  const sheets = $("spAll").checked && !$("spAllRow").hidden ? project.frames.slice() : [frame()];
+  const toProcessed = $("spRemove").checked;
+  const cells = new Map(); // sheet frame -> uploaded cell files
+  let size = null;
+  try {
+    for (const [n, f] of sheets.entries()) {
+      const im = img(f.file);
+      await loaded(im);
+      const label = sheets.length > 1 ? `Sheet ${n + 1} / ${sheets.length}: ` : "";
+      const cut = await cutSheet(f, im, (i, k) => ($("spInfo").textContent = `${label}cutting frame ${i} / ${k}…`));
+      size ??= cut;
+      const uploaded = [];
+      for (const file of cut.files) {
+        $("spInfo").textContent = `${label}saving ${file.name}…`;
+        uploaded.push((await api(`/api/p/${pid}/upload?name=` + encodeURIComponent(file.name), { method: "POST", body: file })).file);
+      }
+      cells.set(f, uploaded);
+    }
+  } catch (e) {
+    $("spInfo").textContent = "Split failed: " + e.message;
+    $("spGo").disabled = false;
+    return;
   }
-  if ($("spCanvas").checked) { project.canvas = { width: c.width, height: c.height }; syncCanvas(); }
-  const added = await addFiles(files, $("spRemove").checked ? at : at + 1, false);
-  if (added) { go(at + ($("spRemove").checked ? 0 : 1)); fit(); }
+  $("splitDlg").close();
+  checkpoint(); // one undo step restores every sheet
+  const firstSheet = project.frames.indexOf(sheets[0]);
+  project.frames = project.frames.flatMap((f) => {
+    if (!cells.has(f)) return [f];
+    const out = cells.get(f).map((file) => normalize({ frames: [{ file }] }).frames[0]);
+    if (!toProcessed) return [f, ...out];
+    project.processed.push({ file: f.file });
+    return out;
+  });
+  if ($("spCanvas").checked) { project.canvas = { width: size.w, height: size.h }; syncCanvas(); }
+  cur = Math.max(0, firstSheet + (toProcessed ? 0 : 1));
+  changed(true); go(cur); fit();
+  const total = [...cells.values()].reduce((n, c) => n + c.length, 0);
+  toast(`Split ${sheets.length} sheet${sheets.length > 1 ? "s" : ""} into ${total} frames`);
 };
+
 // Native file dialog runs in the server, which is the only way to learn real disk paths: images get
 // linked where they are (or copied, if "Keep copies" is on).
 async function pickFrames(folder = false) {
@@ -844,7 +894,7 @@ async function doExport() {
     for (const [i, f] of project.frames.entries()) {
       state.textContent = `Rendering frame ${i + 1}/${project.frames.length}…`;
       const im = img(f.file);
-      await im.decode();
+      await loaded(im);
       renderExport(g, im, T(f), project.background);
       const blob = await new Promise((res) => c.toBlob(res, "image/png"));
       await api(`/api/p/${pid}/export/frame?i=${i + 1}`, { method: "POST", body: blob });

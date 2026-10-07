@@ -191,7 +191,7 @@
 
 <dialog id="splitDlg">
   <h3>Split sheet into frames</h3>
-  <p class="hint">Cuts the current image into a grid, left to right, top to bottom. The original file is kept.</p>
+  <p class="hint">Cuts images into a grid: left to right, then top to bottom. The original files are kept.</p>
   <canvas id="spPreview"></canvas>
   <div class="spRow">
     <div class="num"><label>Columns</label><input id="spCols" type="number" min="1" max="64" value="4"></div>
@@ -199,7 +199,8 @@
     <div class="num" title="Pixels cut off each cell edge, to drop borders between cells"><label>Trim</label><input id="spTrim" type="number" min="0" value="0"><i>px</i></div>
   </div>
   <p id="spInfo"></p>
-  <label class="switch"><input id="spRemove" type="checkbox" checked><span></span>Move the sheet to Processed (kept, not animated)</label>
+  <label class="switch" id="spAllRow"><input id="spAll" type="checkbox"><span></span>Apply to all <b id="spAllCount"></b>&nbsp;images in the timeline, in order</label>
+  <label class="switch"><input id="spRemove" type="checkbox" checked><span></span>Move the sheets to Processed (kept, not animated)</label>
   <label class="switch"><input id="spCanvas" type="checkbox" checked><span></span>Set canvas size to the cell size</label>
   <form method="dialog" class="spBtns"><button>Cancel</button><button id="spGo" type="button" class="primary">Split</button></form>
 </dialog>
