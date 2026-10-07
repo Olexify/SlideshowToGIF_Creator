@@ -1,7 +1,10 @@
+<img align="left" width="192" height="192" alt="image" src="https://github.com/user-attachments/assets/74a08819-c89f-4df1-bcfc-f87e72dc07a1" />
 # SlideshowToGIF Creator
 
 A local tool for reviewing AI-generated animation frames, lining them up by hand, and exporting GIF / MP4 / WebM.
 Your source images are never modified. All alignment is stored in `project.json`.
+
+<img width="2549" height="1144" alt="image" src="https://github.com/user-attachments/assets/f47a34b4-d4c9-4ce0-8010-aef6fae3b148" />
 
 ## Run
 
@@ -23,6 +26,8 @@ Images you copy into that folder yourself are picked up with **Rescan**.
 in the side panel. Set columns, rows and an optional trim (pixels removed from each cell edge, for borders
 between cells). The preview numbers the cells in playback order. The cells are saved as new files, such as
 `sheet_01.png`, and the original sheet is kept.
+
+<img width="800" height="480" alt="image" src="https://github.com/user-attachments/assets/8decbc9f-aead-43bf-97b3-d037548b7423" />
 
 ## Project layout
 
