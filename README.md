@@ -1,19 +1,12 @@
-<table>
-<tr>
-<td width="170">
-<img width="150" height="150" alt="SlideshowToGIF Creator icon" src="https://github.com/user-attachments/assets/74a08819-c89f-4df1-bcfc-f87e72dc07a1" />
-</td>
-<td>
+<img align="left" width="150" height="150" alt="SlideshowToGIF Creator icon" src="https://github.com/user-attachments/assets/74a08819-c89f-4df1-bcfc-f87e72dc07a1" />
 
-# SlideshowToGIF Creator
+<h1>SlideshowToGIF Creator</h1>
 
-A local tool for **reviewing AI-generated animation frames**, manually aligning them, and exporting the result as **GIF, MP4, or WebM**.
+A local tool for <strong>reviewing AI-generated animation frames</strong>, manually aligning them, and exporting the result as <strong>GIF, MP4, or WebM</strong>.
 
-Your source images are **never modified**. All alignment and project settings are stored in `project.json`.
+Your source images are <strong>never modified</strong>. All alignment and project settings are stored in <code>project.json</code>.
 
-</td>
-</tr>
-</table>
+<br clear="left">
 
 <img width="2549" height="1144" alt="SlideshowToGIF Creator interface" src="https://github.com/user-attachments/assets/f47a34b4-d4c9-4ce0-8010-aef6fae3b148" />
 
