@@ -81,22 +81,24 @@ async function flushSave(keepalive = false) {
 }
 addEventListener("pagehide", () => saveTimer && flushSave(true));
 
-// ---------- undo / redo (snapshots of frames: transforms, order, durations) ----------
+// ---------- undo / redo (snapshots of frames: transforms, order, durations; plus canvas size) ----------
+const snapshot = () => JSON.stringify({ frames: project.frames, canvas: project.canvas });
 const undoStack = [], redoStack = [];
 let lastKey = null, lastTime = 0;
 function checkpoint(key = null) {
   const now = Date.now();
   if (key && key === lastKey && now - lastTime < 700) { lastTime = now; return; } // coalesce key-repeat / wheel
-  undoStack.push(JSON.stringify(project.frames));
+  undoStack.push(snapshot());
   if (undoStack.length > 300) undoStack.shift();
   redoStack.length = 0;
   lastKey = key; lastTime = now;
 }
 function restore(from, to) {
   if (!from.length) return;
-  to.push(JSON.stringify(project.frames));
-  const file = frame()?.file;
-  project.frames = JSON.parse(from.pop());
+  to.push(snapshot());
+  const file = frame()?.file, oldCanvas = JSON.stringify(project.canvas);
+  ({ frames: project.frames, canvas: project.canvas } = JSON.parse(from.pop()));
+  if (project.canvas && JSON.stringify(project.canvas) !== oldCanvas) { syncCanvas(); fit(); }
   const i = project.frames.findIndex((f) => f.file === file);
   cur = i >= 0 ? i : Math.min(cur, project.frames.length - 1);
   lastKey = null;
@@ -605,12 +607,12 @@ function insertFrame(file, at = null) {
   project.frames.splice(i, 0, f);
   if (i <= cur && project.frames.length > 1) cur++;
 }
-async function addFiles(files, at = null) {
+async function addFiles(files, at = null, undoable = true) {
   const all = [...files];
   files = all.filter((f) => /\.(png|jpe?g|webp)$/i.test(f.name))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   if (!files.length) return toast(all.length ? "Only PNG, JPG and WebP images can be added" : "Nothing to add", true);
-  checkpoint();
+  if (undoable) checkpoint();
   const wasEmpty = !project.frames.length;
   let added = 0;
   for (const [n, file] of files.entries()) {
@@ -626,7 +628,78 @@ async function addFiles(files, at = null) {
   if (wasEmpty) cur = 0;
   changed(true);
   if (added) toast(`Added ${added} frame${added > 1 ? "s" : ""}`);
+  return added;
 }
+
+// ---------- split a sprite sheet into frames ----------
+// Cuts the current frame's source image into a cols × rows grid (row by row), uploads each cell as a new
+// file next to it and puts the cells in its place in the timeline. The sheet file itself is not touched.
+const splitIn = () => ({ cols: Math.max(1, parseInt($("spCols").value) || 1), rows: Math.max(1, parseInt($("spRows").value) || 1),
+  trim: Math.max(0, parseInt($("spTrim").value) || 0) });
+function cellRects(w, h, { cols, rows, trim }) {
+  // equal cell size for every frame; cell origins follow the true (possibly fractional) grid
+  const cw = Math.floor(w / cols) - 2 * trim, ch = Math.floor(h / rows) - 2 * trim;
+  const out = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++)
+    out.push({ x: Math.round((c * w) / cols) + trim, y: Math.round((r * h) / rows) + trim, w: cw, h: ch });
+  return out;
+}
+function drawSplitPreview() {
+  const im = img(frame().file), c = $("spPreview"), g = c.getContext("2d");
+  const s = Math.min(560 / im.naturalWidth, 320 / im.naturalHeight);
+  c.width = Math.round(im.naturalWidth * s); c.height = Math.round(im.naturalHeight * s);
+  g.drawImage(im, 0, 0, c.width, c.height);
+  g.fillStyle = "rgba(0,0,0,.55)"; g.fillRect(0, 0, c.width, c.height);
+  const p = splitIn(), rects = cellRects(im.naturalWidth, im.naturalHeight, p);
+  g.font = "600 13px Segoe UI, system-ui, sans-serif"; g.textBaseline = "top";
+  rects.forEach((r, i) => {
+    if (r.w < 1 || r.h < 1) return;
+    g.drawImage(im, r.x, r.y, r.w, r.h, r.x * s, r.y * s, r.w * s, r.h * s); // cells bright, gutters dimmed
+    g.strokeStyle = "#5b9cff"; g.lineWidth = 1.5; g.strokeRect(r.x * s + 0.75, r.y * s + 0.75, r.w * s - 1.5, r.h * s - 1.5);
+    g.fillStyle = "rgba(17,18,21,.85)"; g.fillRect(r.x * s + 4, r.y * s + 4, 22, 18);
+    g.fillStyle = "#fff"; g.fillText(i + 1, r.x * s + 8, r.y * s + 6);
+  });
+  const r0 = rects[0];
+  $("spInfo").textContent = r0.w < 1 || r0.h < 1 ? "Trim is larger than the cells."
+    : `${rects.length} frames of ${r0.w} × ${r0.h} px, numbered in playback order.`;
+  $("spGo").disabled = r0.w < 1 || r0.h < 1;
+}
+$("splitBtn").onclick = async () => {
+  const f = frame(); if (!f) return;
+  const im = img(f.file);
+  try { await im.decode(); } catch { return toast("Couldn't load " + f.file, true); }
+  if (!$("splitDlg").dataset.used) { // first use: guess a grid of roughly square cells, 2 rows for wide sheets
+    const ratio = im.naturalWidth / im.naturalHeight;
+    $("spRows").value = ratio > 1.3 ? 2 : ratio < 0.77 ? Math.round(2 / ratio) : 2;
+    $("spCols").value = ratio > 1.3 ? Math.round(2 * ratio) : 2;
+  }
+  $("spCanvas").checked = !project.canvas || (project.canvas.width === im.naturalWidth && project.canvas.height === im.naturalHeight);
+  drawSplitPreview();
+  $("splitDlg").showModal();
+};
+for (const id of ["spCols", "spRows", "spTrim"]) $(id).addEventListener("input", drawSplitPreview);
+$("spGo").onclick = async () => {
+  $("splitDlg").dataset.used = 1;
+  const f = frame(), im = img(f.file), at = cur;
+  const rects = cellRects(im.naturalWidth, im.naturalHeight, splitIn());
+  const c = document.createElement("canvas"); c.width = rects[0].w; c.height = rects[0].h;
+  const g = c.getContext("2d"), pad = String(rects.length).length < 2 ? 2 : String(rects.length).length;
+  const files = [];
+  $("spGo").disabled = true;
+  for (const [i, r] of rects.entries()) {
+    $("spInfo").textContent = `Cutting frame ${i + 1} / ${rects.length}…`;
+    g.clearRect(0, 0, c.width, c.height);
+    g.drawImage(im, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+    const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+    files.push(new File([blob], `${stem(f.file)}_${String(i + 1).padStart(pad, "0")}.png`, { type: "image/png" }));
+  }
+  $("splitDlg").close();
+  checkpoint(); // one undo step restores the sheet
+  if ($("spRemove").checked) { project.frames.splice(at, 1); cur = Math.max(0, Math.min(cur, project.frames.length - 1)); }
+  if ($("spCanvas").checked) { project.canvas = { width: c.width, height: c.height }; syncCanvas(); }
+  const added = await addFiles(files, $("spRemove").checked ? at : at + 1, false);
+  if (added) { go(at + ($("spRemove").checked ? 0 : 1)); fit(); }
+};
 document.addEventListener("change", (e) => {
   if (e.target.matches("#fileInput, .fileInput2")) { addFiles(e.target.files); e.target.value = ""; }
 });
@@ -709,7 +782,7 @@ addEventListener("change", (e) => { if (e.target.matches("select, input[type=che
 addEventListener("keydown", (e) => {
   const t = e.target;
   if (t.matches("input[type=number], input[type=text], textarea")) { if (e.key === "Enter" || e.key === "Escape") t.blur(); return; }
-  if ($("helpDlg").open) return;
+  if (document.querySelector("dialog[open]")) return;
   const k = e.key, ctrl = e.ctrlKey || e.metaKey, step = e.shiftKey ? 10 : 1;
   const has = !!frame();
   let handled = true;

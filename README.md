@@ -16,6 +16,11 @@ to insert the images before it. Frames are copied into
 `project_dir/frames/` and placed in natural filename order (`frame_001`, `frame_001_5`, `frame_002`, …).
 Images you copy into that folder yourself are picked up with **Rescan**.
 
+**Sprite sheets:** if one image holds a grid of frames, select it and click **Split sheet into frames…**
+in the side panel. Set columns, rows and an optional trim (pixels removed from each cell edge, for borders
+between cells). The preview numbers the cells in playback order. The cells are saved as new files, such as
+`sheet_01.png`, and the original sheet is kept.
+
 ## Project layout
 
 ```

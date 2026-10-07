@@ -225,3 +225,13 @@ kbd { font: 600 10px/1 ui-monospace, Consolas, monospace; color: var(--text); ba
 #toast { animation: tipin .15s ease-out; }
 
 #nostart { display: none !important; }
+
+/* ---------- split sheet dialog ---------- */
+#splitDlg { width: 620px; }
+#splitDlg .hint { margin: -4px 0 12px; }
+#spPreview { display: block; margin: 0 auto 12px; border-radius: 6px; max-width: 100%; background: #000; }
+.spRow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.spRow .num label { width: auto; padding-right: 8px; }
+#spInfo { color: var(--muted); margin: 10px 0; }
+#splitDlg .switch { display: flex; margin: 8px 0; }
+.spBtns { display: flex; justify-content: flex-end; gap: 8px; }

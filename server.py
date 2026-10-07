@@ -163,6 +163,11 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_error(404)
 
 
+class Server(ThreadingHTTPServer):
+    # Windows' SO_REUSEADDR lets two servers share one port and split the requests between them
+    allow_reuse_address = os.name != "nt"
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 8765
@@ -171,7 +176,14 @@ def main():
     root = Path(args[0] if args else "project").resolve()
     (root / "frames").mkdir(parents=True, exist_ok=True)
     Handler.root = root
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    for port in range(port, port + 20):  # another editor already running? take the next free port
+        try:
+            srv = Server(("127.0.0.1", port), Handler)
+            break
+        except OSError:
+            continue
+    else:
+        sys.exit("No free port found")
     url = f"http://127.0.0.1:{port}/"
     print(f"Project: {root}\nEditor:  {url}")
     if "--no-browser" not in sys.argv:

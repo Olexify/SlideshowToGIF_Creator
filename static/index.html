@@ -83,6 +83,7 @@
       <button id="copyT" title="Copy transform (Ctrl+C)">Copy</button><button id="pasteT" title="Paste transform (Ctrl+V)">Paste</button><button id="resetT">Reset</button>
     </div>
     <div class="row"><button id="prevT">Copy from previous frame</button></div>
+    <div class="row"><button id="splitBtn" title="Cut a sprite sheet / grid image into separate frames">Split sheet into frames…</button></div>
     <div class="field"><label>Duration</label><div class="num grow"><input id="dur" type="number" min="10" step="1" placeholder="auto"><i>ms</i></div></div>
   </details>
 
@@ -145,6 +146,21 @@
   </div>
   <div id="thumbs"></div>
 </footer>
+
+<dialog id="splitDlg">
+  <h3>Split sheet into frames</h3>
+  <p class="hint">Cuts the current image into a grid, left to right, top to bottom. The original file is kept.</p>
+  <canvas id="spPreview"></canvas>
+  <div class="spRow">
+    <div class="num"><label>Columns</label><input id="spCols" type="number" min="1" max="64" value="4"></div>
+    <div class="num"><label>Rows</label><input id="spRows" type="number" min="1" max="64" value="2"></div>
+    <div class="num" title="Pixels cut off each cell edge, to drop borders between cells"><label>Trim</label><input id="spTrim" type="number" min="0" value="0"><i>px</i></div>
+  </div>
+  <p id="spInfo"></p>
+  <label class="switch"><input id="spRemove" type="checkbox" checked><span></span>Replace the sheet in the timeline</label>
+  <label class="switch"><input id="spCanvas" type="checkbox" checked><span></span>Set canvas size to the cell size</label>
+  <form method="dialog" class="spBtns"><button>Cancel</button><button id="spGo" type="button" class="primary">Split</button></form>
+</dialog>
 
 <dialog id="helpDlg">
   <h3>Keyboard &amp; mouse</h3>
