@@ -1,74 +1,256 @@
-# SlideshowToGIF Creator
+<img align="left" width="150" height="150" alt="SlideshowToGIF Creator icon" src="https://github.com/user-attachments/assets/74a08819-c89f-4df1-bcfc-f87e72dc07a1" />
 
-A local tool for reviewing AI-generated animation frames, lining them up by hand, and exporting GIF / MP4 / WebM.
-Your source images are never modified. All alignment is stored in `project.json`.
+**𝗦𝗹𝗶𝗱𝗲𝘀𝗵𝗼𝘄𝗧𝗼𝗚𝗜𝗙 𝗖𝗿𝗲𝗮𝘁𝗼𝗿**
+
+A local tool for **reviewing AI-generated animation frames**, manually aligning them, and exporting the result as **GIF, MP4, or WebM**.
+
+Your source images are **never modified or copied**: they are linked from wherever they are on disk. All alignment and project settings are stored in a small `project.json` per project.
+
+<br clear="left">
+
+<img width="2549" height="1144" alt="SlideshowToGIF Creator interface" src="https://github.com/user-attachments/assets/f47a34b4-d4c9-4ce0-8010-aef6fae3b148" />
 
 ## Run
 
-Requires Python 3.9+ and `ffmpeg` on PATH. There are no pip dependencies.
+**Requirements**
 
-Double-click `start.bat` (or run `python server.py`). The editor opens at http://127.0.0.1:8765/.
-Keep the console window open while you work.
+- Python 3.9+
+- `ffmpeg` available on `PATH`
+- No pip dependencies
 
-**App icon:** run `make_shortcut.bat` once to get a "Frame Aligner" shortcut with the app icon on your desktop.
-In Chrome or Edge you can also use **Install app** in the address bar to open the editor in its own window with the icon.
+Double-click `start.bat`, or run:
 
-## Images stay where they are
+```bash
+python server.py
+```
 
-**Add frames** and **Add folder** open a normal Windows file picker. The images are *linked* from where they
-are, so nothing is copied and the app stays small. If an original is later moved or deleted, its thumbnail shows
-**FILE NOT FOUND**.
+Keep the console window open while you work. The app opens at:
 
-* **Keep copies of added images** (side panel, Storage): copies picked images into the project instead, so the
-  project survives if the originals go away.
-* **Dropped images** are always copied, because a browser never tells a page where a dropped file lives on disk.
-* **Split sheet into frames…** saves its cut-out frames inside the project, since they are new images.
+```text
+http://127.0.0.1:8765/
+```
+
+### App shortcut
+
+Run `make_shortcut.bat` once to create a **Frame Aligner** desktop shortcut with the app icon.
+
+In Chrome or Edge, you can also use **Install app** from the address bar to open the editor in its own window with the icon.
+
+---
+
+## Adding frames
+
+Click **Add frames** (pick images) or **Add folder** (every image in a folder). A normal Windows file picker opens.
+
+The images are **linked where they are**. Nothing is copied, so the app stays lightweight.
+If an original is later moved or deleted, its thumbnail shows **FILE NOT FOUND**.
+
+Frames are ordered naturally by filename:
+
+```text
+frame_001
+frame_001_5
+frame_002
+...
+```
+
+| Option | What happens |
+| --- | --- |
+| **Keep copies of added images** (side panel → Storage) | Picked images are copied into the project, so it survives if the originals go away |
+| Drop images onto the window | Copied into the project, because a browser never tells a page where a dropped file lives on disk |
+| Drop images onto a thumbnail | Same, inserted **before that frame** |
+
+---
 
 ## Projects
 
-The project button next to the logo switches between projects and can create, rename, clear, or delete them.
-It can also **delete all other projects**. Every destructive action asks first, and none of them touch your
-original images. Each project is only a small `project.json`, plus any copies described above.
+Click the project name next to the logo to open the project menu:
+
+- Switch between projects to work on several GIFs at once
+- **New project**, **Rename this project**
+- **Clear this project**: removes all frames and alignment to start again
+- **Delete this project** / **Delete all other projects**
+
+Every destructive action asks for confirmation. None of them touch your original images, only the app's own project data.
+
+---
 
 ## Export
 
-Choose GIF, MP4, WebM and/or **PNGs** (the aligned frame sequence), then click **Export**. Files are named after
-the project and never overwrite existing files: `Fox walk.gif`, then `Fox walk (2).gif`, and so on.
-Under **Storage → Export to**, pick **Downloads** (the default), **App folder** (`exports/` here), or any **Custom…** folder.
+Choose **GIF**, **MP4**, **WebM** and/or **PNGs** (the aligned frame sequence), then click **Export**.
 
-**Sprite sheets:** if one image holds a grid of frames, select it and click **Split sheet into frames…**
-in the side panel. Set columns, rows and an optional trim (pixels removed from each cell edge, for borders
-between cells). The preview numbers the cells in playback order.
+Files are named after the project and never overwrite existing files: `Fox walk.gif`, then `Fox walk (2).gif`, and so on.
+
+Under **Storage → Export to**, pick:
+
+| Option | Folder |
+| --- | --- |
+| **Downloads** (default) | your Downloads folder |
+| **App folder** | `exports/` inside the app |
+| **Custom…** | any folder you choose |
+
+---
+
+## Sprite sheets
+
+If a single image contains a grid of animation frames:
+
+1. Select the image.
+2. Click **Split sheet into frames…** in the side panel.
+3. Set the number of **columns** and **rows**.
+4. Optionally set a **trim** value to remove pixels from each cell edge, useful for borders or spacing between cells.
+
+The preview shows each cell numbered in playback order.
+
+Extracted cells are saved as separate files inside the project, since they are new images:
+
+```text
+sheet_01.png
+sheet_02.png
+sheet_03.png
+...
+```
+
+The original sprite sheet is preserved.
+
+<img width="800" height="480" alt="Sprite sheet splitting interface" src="https://github.com/user-attachments/assets/8decbc9f-aead-43bf-97b3-d037548b7423" />
+
+---
 
 ## App folder layout
 
-```
-settings.json                export folder, copy toggle, last open project
-projects/<id>/project.json   name, canvas, fps, loop, edges, markers, frames[{file,x,y,scale,rotation,duration}]
-projects/<id>/files/         only if needed: dropped images, split-sheet frames, "keep copies"
-exports/                     only if "App folder" is chosen as the export target
+```text
+SlideshowToGIF_Creator/
+├── settings.json          export folder, copy toggle, last open project
+│
+├── projects/
+│   └── <id>/
+│       ├── project.json   name, canvas, fps, loop, out-of-bounds mode,
+│       │                  markers, and frame transforms
+│       └── files/         only if needed: dropped images, split-sheet
+│                          frames, "keep copies"
+│
+└── exports/               only if "App folder" is the export target
 ```
 
-A frame's `file` is either an absolute path (a linked original) or `files/...` (a copy inside the project).
-`duration` is in milliseconds; `null` means `1000 / fps`.
+A frame's `file` is either an **absolute path** (a linked original) or `files/...` (a copy inside the project).
+
+Each frame entry in `project.json` stores:
+
+```text
+file
+x
+y
+scale
+rotation
+duration
+```
+
+`duration` is stored in **milliseconds**.
+
+When `duration` is `null`, the frame duration is calculated from:
+
+```text
+1000 / fps
+```
+
+---
 
 ## Frame transform vs viewport
 
-* **Frame transform** (x, y, scale, rotation) is the alignment. It is saved and applied on export.
-  Drag the image, use the wheel (Shift = finer), the arrows (Shift = 10 px), Q/E to rotate, or type values in the side panel.
-* **Viewport** (Ctrl+wheel, right/middle-drag, F = fit, 1 = 100%, double-click = reset) only changes how you see the canvas.
-  It is never saved or exported.
+The editor separates **frame alignment** from **viewport navigation**.
 
-Compare modes (O cycles them): **Onion** (reference blended on top), **Difference** (black where the frames match),
-and **Split** (current on the left, reference on the right, drag the divider). **Blink** (B) flips between the two.
+### Frame transform
 
-Press **?** in the toolbar for all shortcuts. Note that the arrow keys move the image, so frame stepping uses **A / D**
-(or PageUp / PageDown).
+Frame transforms affect the exported animation and are saved in `project.json`.
+
+They include:
+
+```text
+x
+y
+scale
+rotation
+```
+
+| Action | Control |
+| --- | --- |
+| Move frame | Drag |
+| Scale | Mouse wheel |
+| Fine scale | Shift + wheel |
+| Move 1 px | Arrow keys |
+| Move 10 px | Shift + arrow keys |
+| Rotate | Q / E |
+| Exact values | Side panel |
+
+### Viewport
+
+Viewport controls only change how you **see the canvas** while editing.
+
+They are **never saved or exported**.
+
+| Action | Control |
+| --- | --- |
+| Zoom viewport | Ctrl + wheel |
+| Pan viewport | Right-drag / middle-drag |
+| Fit canvas | F |
+| 100% zoom | 1 |
+| Reset viewport | Double-click |
+
+---
+
+## Frame comparison
+
+Use comparison modes to line up neighboring frames precisely.
+
+Press **O** to cycle through:
+
+- **Onion** — blends the reference frame over the current frame
+- **Difference** — matching areas become black
+- **Split** — current frame on the left, reference frame on the right; drag the divider
+
+Press **B** for **Blink mode**, which rapidly switches between the two frames.
+
+> **Note:** Arrow keys move the current image, so frame navigation uses **A / D** or **PageUp / PageDown**.
+
+Press **?** in the toolbar to view the complete shortcut list.
+
+---
 
 ## Code map
 
-* `server.py`: projects and settings (atomic JSON writes), native file pickers, serving linked images, export and ffmpeg encoding.
-* `static/render.js`: the one place where a frame transform is drawn. Preview, playback and export all use it.
-  Automatic registration or interpolation would plug in here, or would write `x/y/scale/rotation` into `project.json`.
-* `static/app.js`: the editor UI.
-* `test_server.py`: self-check covering uploads, path safety, project round-trip, and encoded durations.
+### `server.py`
+
+Handles:
+
+- Projects and settings (atomic JSON writes)
+- Native file and folder pickers
+- Serving linked images (only images that belong to a project)
+- Export and FFmpeg encoding
+
+### `static/render.js`
+
+The central rendering path for frame transforms.
+
+Preview, playback, and export all use the same transform logic here.
+
+Future features such as **automatic registration** or **frame interpolation** could either plug into this rendering path or write calculated:
+
+```text
+x / y / scale / rotation
+```
+
+values directly into `project.json`.
+
+### `static/app.js`
+
+Contains the editor UI and interaction logic.
+
+### `test_server.py`
+
+Self-checks for:
+
+- Linking without copies, and the copy toggle
+- Path safety and blocking requests from other websites
+- Project create / clear / delete, and that originals are never touched
+- Export folder, no overwrites, and encoded frame durations
