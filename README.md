@@ -1,12 +1,10 @@
 <img align="left" width="150" height="150" alt="SlideshowToGIF Creator icon" src="https://github.com/user-attachments/assets/74a08819-c89f-4df1-bcfc-f87e72dc07a1" />
 
-<p>
-  <strong>SlideshowToGIF Creator</strong>
-</p>
+**𝗦𝗹𝗶𝗱𝗲𝘀𝗵𝗼𝘄𝗧𝗼𝗚𝗜𝗙 𝗖𝗿𝗲𝗮𝘁𝗼𝗿**
 
-A local tool for <strong>reviewing AI-generated animation frames</strong>, manually aligning them, and exporting the result as <strong>GIF, MP4, or WebM</strong>.
+A local tool for **reviewing AI-generated animation frames**, manually aligning them, and exporting the result as **GIF, MP4, or WebM**.
 
-Your source images are <strong>never modified</strong>. All alignment and project settings are stored in <code>project.json</code>.
+Your source images are **never modified**. All alignment and project settings are stored in `project.json`.
 
 <br clear="left">
 
