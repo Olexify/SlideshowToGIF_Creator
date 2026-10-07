@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frame Aligner</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header id="toolbar">
+  <label class="btn" title="Add images (or drop files anywhere)">+ Add frames<input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
+  <button id="rescan" title="Add images placed in project/frames by hand">Rescan folder</button>
+  <span class="sep"></span>
+  <button id="first" title="First frame">|&lt;</button>
+  <button id="prev" title="Previous (A)">&lt;</button>
+  <button id="play" title="Play / pause (Space)">▶ Play</button>
+  <button id="next" title="Next (D)">&gt;</button>
+  <button id="last" title="Last frame">&gt;|</button>
+  <span id="frameLabel" class="muted"></span>
+  <span class="sep"></span>
+  <button id="undo" title="Ctrl+Z">Undo</button>
+  <button id="redo" title="Ctrl+Shift+Z / Ctrl+Y">Redo</button>
+  <span class="grow"></span>
+  <span id="saveState" class="muted"></span>
+  <button id="help" title="Shortcuts">?</button>
+</header>
+
+<main id="stage">
+  <canvas id="view"></canvas>
+  <div id="drop" hidden>Drop images to add frames</div>
+  <div id="empty" hidden>No frames yet. Click <b>+ Add frames</b> or drop images here.</div>
+</main>
+
+<aside id="side">
+  <section>
+    <h3>Frame transform</h3>
+    <div class="field"><label data-scrub="x" data-step="0.1">X</label><input id="tx" type="number" step="0.1"><span>px</span></div>
+    <div class="field"><label data-scrub="y" data-step="0.1">Y</label><input id="ty" type="number" step="0.1"><span>px</span></div>
+    <div class="field"><label data-scrub="scale" data-step="0.01">Scale</label><input id="ts" type="number" step="0.01"><span>%</span></div>
+    <div class="field"><label data-scrub="rotation" data-step="0.01">Rotation</label><input id="tr" type="number" step="0.01"><span>°</span></div>
+    <p class="hint">Drag labels to scrub. Drag image to move, wheel = frame scale (Shift finer), Q/E rotate.</p>
+    <div class="row">
+      <button id="copyT">Copy</button><button id="pasteT">Paste</button><button id="resetT">Reset</button>
+    </div>
+    <div class="row"><button id="prevT">Copy from previous frame</button></div>
+    <div class="field"><label>Duration</label><input id="dur" type="number" min="10" step="1" placeholder="auto"><span>ms</span></div>
+  </section>
+
+  <section>
+    <h3>Reference</h3>
+    <div class="field"><label>Mode</label>
+      <select id="refMode"><option value="off">Off</option><option value="onion" selected>Onion skin</option><option value="diff">Difference</option></select></div>
+    <div class="field"><label>Frame</label><select id="refFrame"></select></div>
+    <div class="field"><label>Opacity</label><input id="refOpacity" type="range" min="0" max="100" value="50"><span id="refOpacityVal">50%</span></div>
+    <div class="field"><label><input id="blink" type="checkbox"> Blink</label><input id="blinkMs" type="range" min="80" max="1000" step="10" value="300"><span id="blinkMsVal">300ms</span></div>
+  </section>
+
+  <section>
+    <h3>Playback</h3>
+    <div class="field"><label>FPS</label><input id="fps" type="range" min="1" max="30" value="12"><span id="fpsVal">12</span></div>
+    <div class="row presets" id="fpsPresets"></div>
+    <div class="field"><label>Loop</label><select id="loop"><option value="loop">Loop</option><option value="pingpong">Ping-pong</option></select></div>
+  </section>
+
+  <section>
+    <h3>View</h3>
+    <div class="checks">
+      <label><input type="checkbox" id="gCenter"> Center lines</label>
+      <label><input type="checkbox" id="gThirds"> Thirds</label>
+      <label><input type="checkbox" id="gCross"> Cursor crosshair</label>
+      <label><input type="checkbox" id="gMarkers" checked> Markers</label>
+      <label><input type="checkbox" id="markerTool"> Marker tool (M)</label>
+    </div>
+    <div class="row"><button id="clearMarkers">Clear markers</button></div>
+    <div class="field"><label>Out of bounds</label>
+      <select id="background"><option value="clamp">Edge extend</option><option value="black">Black</option><option value="transparent">Transparent</option></select></div>
+    <div class="field"><label>Viewport</label><span id="zoomVal" class="grow"></span><button id="fit" title="F">Fit</button><button id="z100" title="1">100%</button></div>
+    <p class="hint">Viewport zoom (Ctrl+wheel, right/middle-drag to pan) only changes how you look — it is never exported.</p>
+  </section>
+
+  <section>
+    <h3>Canvas &amp; export</h3>
+    <div class="field"><label>Size</label><input id="cw" type="number" min="1"><span>×</span><input id="ch" type="number" min="1"></div>
+    <div class="checks">
+      <label><input type="checkbox" id="exGif" checked> GIF</label>
+      <label><input type="checkbox" id="exMp4"> MP4</label>
+      <label><input type="checkbox" id="exWebm"> WebM</label>
+    </div>
+    <div class="row"><button id="export" class="primary">Export</button><button id="exportPng">Aligned PNGs only</button></div>
+    <p id="exportState" class="hint"></p>
+  </section>
+</aside>
+
+<footer id="timeline">
+  <input id="scrub" type="range" min="0" max="0" value="0">
+  <div id="thumbs"></div>
+</footer>
+
+<dialog id="helpDlg">
+  <h3>Shortcuts</h3>
+  <table>
+    <tr><td>Drag image</td><td>Move frame X/Y</td></tr>
+    <tr><td>Arrows / Shift+Arrows</td><td>Move 1 px / 10 px</td></tr>
+    <tr><td>Wheel / Shift+Wheel</td><td>Frame scale / finer</td></tr>
+    <tr><td>Q / E (Shift = ×10)</td><td>Rotate −/+ 0.1°</td></tr>
+    <tr><td>A / D, PageUp / PageDown</td><td>Previous / next frame</td></tr>
+    <tr><td>Space</td><td>Play / pause</td></tr>
+    <tr><td>B</td><td>Toggle blink</td></tr>
+    <tr><td>O</td><td>Cycle reference mode (off / onion / difference)</td></tr>
+    <tr><td>M, click canvas</td><td>Marker tool; right-click a marker to delete</td></tr>
+    <tr><td>Ctrl+C / Ctrl+V</td><td>Copy / paste transform</td></tr>
+    <tr><td>Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y</td><td>Undo / redo</td></tr>
+    <tr><td>Ctrl+Wheel, right/middle drag</td><td>Viewport zoom / pan</td></tr>
+    <tr><td>F / 1 / double-click</td><td>Fit / 100% / reset viewport</td></tr>
+  </table>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
