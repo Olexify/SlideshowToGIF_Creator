@@ -6,19 +6,18 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<script>
-  // Opened as a file instead of through server.py: nothing below can work, so explain how to start it.
-  if (location.protocol === "file:") document.write(`<div style="position:fixed;inset:0;z-index:999;display:grid;place-items:center;background:#111215;color:#e4e6eb;font:15px/1.6 Segoe UI,system-ui,sans-serif">
-    <div style="max-width:520px;padding:32px 40px;border:1px solid #3a3e47;border-radius:14px;background:#18191d">
-      <h2 style="margin:0 0 12px">Start the editor with <code>start.bat</code></h2>
-      <p style="margin:0 0 10px;color:#8b909b">This page needs its small local server, so it can't be opened as a file.</p>
-      <ol style="margin:0;padding-left:20px">
-        <li>Close this tab.</li>
-        <li>Double-click <b>start.bat</b> in the SlideshowToGIF_Creator folder.</li>
-        <li>The editor opens at <b style="color:#5b9cff">http://127.0.0.1:8765/</b>. Keep the black window open while you work.</li>
-      </ol>
-    </div></div>`);
-</script>
+<!-- Shown only when style.css can't load, i.e. the page was opened as a file instead of through server.py -->
+<div id="nostart" style="position:fixed;inset:0;z-index:999;display:grid;place-items:center;background:#111215;color:#e4e6eb;font:15px/1.6 Segoe UI,system-ui,sans-serif">
+  <div style="max-width:520px;padding:32px 40px;border:1px solid #3a3e47;border-radius:14px;background:#18191d">
+    <h2 style="margin:0 0 12px">Start the editor with start.bat</h2>
+    <p style="margin:0 0 10px;color:#8b909b">This page needs its small local server, so it can't be opened as a file.</p>
+    <ol style="margin:0;padding-left:20px">
+      <li>Close this tab.</li>
+      <li>Double-click <b>start.bat</b> in the SlideshowToGIF_Creator folder.</li>
+      <li>The editor opens at <b style="color:#5b9cff">http://127.0.0.1:8765/</b>. Keep the black window open while you work.</li>
+    </ol>
+  </div>
+</div>
 <svg width="0" height="0" style="position:absolute">
   <symbol id="i-first" viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></symbol>
   <symbol id="i-prev" viewBox="0 0 24 24"><path d="M16 5v14L5 12z"/></symbol>

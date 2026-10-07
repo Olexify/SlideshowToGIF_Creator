@@ -223,3 +223,5 @@ kbd { font: 600 10px/1 ui-monospace, Consolas, monospace; color: var(--text); ba
 #tip kbd { background: var(--bg); }
 @keyframes tipin { from { opacity: 0; transform: translateY(2px); } }
 #toast { animation: tipin .15s ease-out; }
+
+#nostart { display: none !important; }
