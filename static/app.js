@@ -43,6 +43,8 @@ function normalize(p) {
     file: f.file, x: +f.x || 0, y: +f.y || 0, scale: +f.scale || 1, rotation: +f.rotation || 0,
     duration: +f.duration || null,
   }));
+  // "processed" images (e.g. a sprite sheet after splitting): kept in the project, never animated or exported
+  p.processed = (p.processed || []).filter((f) => f && f.file).map((f) => ({ file: f.file }));
   return p;
 }
 
@@ -57,7 +59,7 @@ function img(file) {
     im = new Image();
     im.onload = () => {
       if (!project.canvas) { project.canvas = { width: im.naturalWidth, height: im.naturalHeight }; syncCanvas(); fit(); save(); }
-      render();
+      showSizeWarn(); render();
     };
     im.onerror = () => { im.missing = true; refreshTimeline(); render(); };
     im.src = urlOf(file);
@@ -95,7 +97,7 @@ async function flushSave(keepalive = false) {
 addEventListener("pagehide", () => saveTimer && flushSave(true));
 
 // ---------- undo / redo (snapshots of frames: transforms, order, durations; plus canvas size) ----------
-const snapshot = () => JSON.stringify({ frames: project.frames, canvas: project.canvas });
+const snapshot = () => JSON.stringify({ frames: project.frames, processed: project.processed, canvas: project.canvas });
 const undoStack = [], redoStack = [];
 let lastKey = null, lastTime = 0;
 function checkpoint(key = null) {
@@ -110,7 +112,7 @@ function restore(from, to) {
   if (!from.length) return;
   to.push(snapshot());
   const file = frame()?.file, oldCanvas = JSON.stringify(project.canvas);
-  ({ frames: project.frames, canvas: project.canvas } = JSON.parse(from.pop()));
+  ({ frames: project.frames, processed: project.processed = [], canvas: project.canvas } = JSON.parse(from.pop()));
   if (project.canvas && JSON.stringify(project.canvas) !== oldCanvas) { syncCanvas(); fit(); }
   const i = project.frames.findIndex((f) => f.file === file);
   cur = i >= 0 ? i : Math.min(cur, project.frames.length - 1);
@@ -120,6 +122,7 @@ function restore(from, to) {
 
 // Call after any edit. timeline=true when order/durations/frame list changed.
 function changed(timeline = false) {
+  if (!project.frames.length && project.canvas) delete project.canvas; // next image added sets the size again
   if (timeline) buildTimeline(); else refreshTimeline();
   updatePanel();
   render();
@@ -378,6 +381,19 @@ view.addEventListener("wheel", (e) => {
 view.addEventListener("dblclick", fit);
 
 // ---------- side panel ----------
+// The canvas size comes from the first image; say so when the current image doesn't match it.
+function showSizeWarn() {
+  const f = frame(), im = f && images.get(f.file), c = project.canvas;
+  const off = im?.naturalWidth && c && (im.naturalWidth !== c.width || im.naturalHeight !== c.height);
+  $("sizeWarn").hidden = !off;
+  if (off) $("sizeWarnText").textContent = `Image is ${im.naturalWidth}×${im.naturalHeight}, canvas is ${c.width}×${c.height}`;
+}
+$("useImgSize").onclick = () => {
+  const im = images.get(frame()?.file); if (!im?.naturalWidth) return;
+  checkpoint();
+  project.canvas = { width: im.naturalWidth, height: im.naturalHeight };
+  syncCanvas(); fit(); changed();
+};
 function updatePanel() {
   const f = frame();
   const set = (id, v) => { if (document.activeElement !== $(id)) $(id).value = v; };
@@ -386,6 +402,7 @@ function updatePanel() {
   set("dur", f?.duration ?? "");
   $("dur").placeholder = `auto (${Math.round(1000 / project.fps)})`;
   $("frameLabel").textContent = f ? `${cur + 1} / ${project.frames.length}` : "–";
+  showSizeWarn();
   $("hudName").textContent = f ? baseName(f.file) + (images.get(f.file)?.missing ? "  ·  FILE NOT FOUND" : "") : "";
   $("scrub").max = Math.max(0, project.frames.length - 1); $("scrub").value = cur;
   const changedVal = { tx: f && f.x !== 0, ty: f && f.y !== 0, ts: f && f.scale !== 1, tr: f && f.rotation !== 0 };
@@ -546,7 +563,8 @@ function buildTimeline() {
     el.innerHTML = `<div class="pic"><img loading="lazy"><span class="no"></span><span class="reftag">REF</span><span class="dirty" title="Aligned (has a transform)"></span></div>
       <div class="name"></div>
       <div class="meta"><input type="number" min="10" step="1" title="Hold duration in ms (empty = from FPS)"><span>ms</span></div>
-      <button class="del" title="Remove from project (file is kept)">×</button>`;
+      <button class="del" title="Remove from project (file is kept)">×</button>
+      <button class="proc" title="Mark as processed: keep it, but leave it out of the animation">✓</button>`;
     el.querySelector("img").src = urlOf(f.file);
     el.querySelector(".no").textContent = i + 1;
     el.querySelector(".name").textContent = stem(f.file);
@@ -555,6 +573,7 @@ function buildTimeline() {
     inp.value = f.duration ?? "";
     inp.onclick = (e) => e.stopPropagation();
     inp.onchange = () => { checkpoint(); f.duration = Math.max(10, parseInt(inp.value)) || null; changed(true); };
+    el.querySelector(".proc").onclick = (e) => { e.stopPropagation(); markProcessed(i); };
     el.querySelector(".del").onclick = (e) => {
       e.stopPropagation(); checkpoint();
       project.frames.splice(i, 1); if (cur >= project.frames.length) cur = Math.max(0, project.frames.length - 1);
@@ -591,6 +610,29 @@ function buildTimeline() {
     dragFrom = -1;
   };
   box.append(add);
+  if (project.processed.length) {
+    const head = document.createElement("div");
+    head.className = "procHead";
+    head.innerHTML = `<b>Processed</b><span></span>`;
+    head.querySelector("span").textContent = `${project.processed.length} · not animated`;
+    box.append(head);
+    project.processed.forEach((p, i) => {
+      const el = document.createElement("div");
+      el.className = "thumb processed";
+      el.title = p.file;
+      el.innerHTML = `<div class="pic"><img loading="lazy"></div><div class="name"></div>
+        <div class="row"><button class="restore" title="Put back into the animation">Restore</button><button class="del2" title="Remove from project (file is kept)">×</button></div>`;
+      el.querySelector("img").src = urlOf(p.file);
+      el.querySelector(".name").textContent = stem(p.file);
+      el.querySelector(".restore").onclick = () => {
+        checkpoint(); project.processed.splice(i, 1);
+        if (playing) togglePlay();
+        insertFrame(p.file); cur = project.frames.findIndex((x) => x.file === p.file); changed(true);
+      };
+      el.querySelector(".del2").onclick = () => { checkpoint(); project.processed.splice(i, 1); changed(true); };
+      box.append(el);
+    });
+  }
   // reference frame list
   const sel = $("refFrame"), keep = sel.value || "prev";
   sel.innerHTML = `<option value="prev">Previous frame</option><option value="next">Next frame</option><option value="first">Frame 1</option>`;
@@ -600,7 +642,7 @@ function buildTimeline() {
 }
 function refreshTimeline() {
   const ri = refIndex(), auto = Math.round(1000 / project.fps);
-  $("thumbs").querySelectorAll(".thumb").forEach((el, i) => {
+  $("thumbs").querySelectorAll(".thumb:not(.processed)").forEach((el, i) => {
     el.classList.toggle("cur", i === cur);
     el.classList.toggle("ref", i === ri && $("refMode").value !== "off");
     el.querySelector(".dirty").hidden = isIdentity(project.frames[i]);
@@ -609,6 +651,18 @@ function refreshTimeline() {
   });
   $("thumbs").children[cur]?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
+
+function markProcessed(i = cur) {
+  const f = project.frames[i]; if (!f) return;
+  if (playing) togglePlay();
+  checkpoint();
+  project.frames.splice(i, 1);
+  project.processed.push({ file: f.file });
+  if (cur >= project.frames.length) cur = Math.max(0, project.frames.length - 1);
+  changed(true);
+  toast(`"${stem(f.file)}" moved to Processed`);
+}
+$("procBtn").onclick = () => markProcessed();
 
 // ---------- adding frames ----------
 // Without a position, new files go before the first frame whose name sorts after them,
@@ -707,7 +761,10 @@ $("spGo").onclick = async () => {
   }
   $("splitDlg").close();
   checkpoint(); // one undo step restores the sheet
-  if ($("spRemove").checked) { project.frames.splice(at, 1); cur = Math.max(0, Math.min(cur, project.frames.length - 1)); }
+  if ($("spRemove").checked) {
+    project.frames.splice(at, 1); project.processed.push({ file: f.file });
+    cur = Math.max(0, Math.min(cur, project.frames.length - 1));
+  }
   if ($("spCanvas").checked) { project.canvas = { width: c.width, height: c.height }; syncCanvas(); }
   const added = await addFiles(files, $("spRemove").checked ? at : at + 1, false);
   if (added) { go(at + ($("spRemove").checked ? 0 : 1)); fit(); }

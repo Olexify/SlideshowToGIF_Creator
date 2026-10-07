@@ -102,6 +102,23 @@ If a single image contains a grid of animation frames:
 
 The preview shows each cell numbered in playback order.
 
+After splitting, the sheet moves to the **Processed** group at the end of the timeline.
+
+---
+
+## Processed group
+
+Images that shouldn't be part of the animation, such as a sprite sheet after splitting, can be marked
+**processed** with the ✓ button on a thumbnail or **Mark as processed** in the side panel.
+They stay in the project in a dimmed **Processed** group at the end of the timeline. They are skipped
+by playback, comparison and export. Use **Restore** to put one back into the animation.
+
+## Canvas size
+
+The canvas (output size) is taken from the first image you add. If the current image has a different
+size, a notice shows both sizes with a **Use image size** button. When a project has no frames left,
+the canvas resets and the next image sets it again.
+
 Extracted cells are saved as separate files inside the project, since they are new images:
 
 ```text

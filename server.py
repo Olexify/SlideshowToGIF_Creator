@@ -132,7 +132,8 @@ def resolve_image(pid, f):
     if Path(f).suffix.lower() not in IMAGE_EXT:
         raise KeyError("not an image")
     if os.path.isabs(f):
-        allowed = {x.get("file") for x in load_project(pid).get("frames", [])} | LINKED.get(pid, set())
+        proj = load_project(pid)
+        allowed = {x.get("file") for x in proj.get("frames", []) + proj.get("processed", [])} | LINKED.get(pid, set())
         if f not in allowed:
             raise KeyError("not part of this project")
         return Path(f)
