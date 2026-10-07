@@ -35,6 +35,9 @@ project_dir/
 * **Viewport** (Ctrl+wheel, right/middle-drag, F = fit, 1 = 100%, double-click = reset) only changes how you see the canvas.
   It is never saved or exported.
 
+Compare modes (O cycles them): **Onion** (reference blended on top), **Difference** (black where the frames match),
+and **Split** (current on the left, reference on the right, drag the divider). **Blink** (B) flips between the two.
+
 Press **?** in the toolbar for all shortcuts. Note that the arrow keys move the image, so frame stepping uses **A / D**
 (or PageUp / PageDown).
 

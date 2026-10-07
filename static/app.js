@@ -12,6 +12,7 @@ let playing = false, playTimer = 0, pingDir = 1;
 let blinkOn = false, blinkPhase = false, blinkTimer = 0;
 let clipboard = null;
 let mouse = null; // last pointer position in screen (CSS) px, for the crosshair
+let split = 0.5;  // compare mode: divider position as a fraction of canvas width (left = current, right = reference)
 // VIEWPORT = how the workspace is looked at (editor only, never saved into frames or exported).
 const viewport = { zoom: 1, panX: 0, panY: 0 };
 
@@ -137,6 +138,7 @@ function draw() {
   vctx.setTransform(1, 0, 0, 1, 0, 0);
   vctx.clearRect(0, 0, view.width, view.height);
   $("empty").hidden = project.frames.length > 0;
+  $("hints").hidden = !project.frames.length;
   const f = frame();
   if (f) img(f.file); // first load sets project.canvas from the image size
   if (!f || !project.canvas) return;
@@ -159,6 +161,14 @@ function draw() {
     } else if (rf && mode === "diff") {
       cctx.globalCompositeOperation = "difference";
       drawFrame(cctx, img(rf.file), T(rf), bg);
+    } else if (rf && mode === "split") {
+      const x = Math.round(split * comp.width);
+      cctx.save();
+      cctx.beginPath(); cctx.rect(x, 0, comp.width - x, comp.height); cctx.clip();
+      cctx.clearRect(x, 0, comp.width - x, comp.height);
+      if (bg === "black") { cctx.fillStyle = "#000"; cctx.fillRect(x, 0, comp.width - x, comp.height); }
+      drawFrame(cctx, img(rf.file), T(rf), bg);
+      cctx.restore();
     }
     cctx.globalCompositeOperation = "source-over"; cctx.globalAlpha = 1;
   }
@@ -167,6 +177,10 @@ function draw() {
   const { zoom, panX, panY } = viewport;
   const W = comp.width, H = comp.height;
   vctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * panX, dpr * panY);
+  vctx.save();
+  vctx.shadowColor = "rgba(0,0,0,.6)"; vctx.shadowBlur = 30 * dpr; vctx.shadowOffsetY = 6 * dpr;
+  vctx.fillStyle = "#000"; vctx.fillRect(0, 0, W, H);
+  vctx.restore();
   if (bg === "transparent") {
     checker ??= vctx.createPattern(makeChecker(), "repeat");
     vctx.fillStyle = checker; vctx.fillRect(0, 0, W, H);
@@ -198,13 +212,42 @@ function draw() {
       vctx.fillStyle = "#ffb347"; vctx.fillText(i + 1, x + 9, y - 6);
     });
   }
+  if (rf && mode === "split" && !(blinkOn && blinkPhase)) drawSplit(sx(split * W), sy(0), sy(H), ri);
   $("zoomVal").textContent = Math.round(zoom * 100) + "%";
   const badges = playing ? `<span class="badge">PLAYING</span>`
     : (rf ? (blinkOn ? `<span class="badge ref">BLINK ${$("blinkMs").value}ms</span>` : "")
       + (mode === "onion" ? `<span class="badge ref">ONION ${$("refOpacity").value}% · #${ri + 1}</span>`
-        : mode === "diff" ? `<span class="badge ref">DIFFERENCE · #${ri + 1}</span>` : "") : "");
+        : mode === "diff" ? `<span class="badge ref">DIFFERENCE · #${ri + 1}</span>`
+        : mode === "split" ? `<span class="badge ref">SPLIT · #${ri + 1}</span>` : "") : "");
   if (badges !== lastBadges) $("hudBadges").innerHTML = lastBadges = badges; // built from numbers only
 }
+function drawSplit(x, top, bottom, ri) {
+  const mid = (top + bottom) / 2;
+  vctx.save();
+  vctx.shadowColor = "rgba(0,0,0,.7)"; vctx.shadowBlur = 6;
+  vctx.fillStyle = "#fff"; vctx.fillRect(x - 1, top, 2, bottom - top);
+  vctx.beginPath(); vctx.arc(x, mid, 14, 0, Math.PI * 2); vctx.fill();
+  vctx.shadowBlur = 0;
+  vctx.fillStyle = "#111";
+  vctx.beginPath(); vctx.moveTo(x - 9, mid); vctx.lineTo(x - 3, mid - 5); vctx.lineTo(x - 3, mid + 5); vctx.fill();
+  vctx.beginPath(); vctx.moveTo(x + 9, mid); vctx.lineTo(x + 3, mid - 5); vctx.lineTo(x + 3, mid + 5); vctx.fill();
+  // labels
+  vctx.font = "600 11px Segoe UI, system-ui, sans-serif"; vctx.textBaseline = "middle";
+  const pill = (text, px, color, right) => {
+    const w = vctx.measureText(text).width + 16, y = top + 18;
+    const left = right ? px + 8 : px - 8 - w;
+    vctx.fillStyle = "rgba(17,18,21,.85)"; vctx.beginPath(); vctx.roundRect(left, y - 10, w, 20, 10); vctx.fill();
+    vctx.fillStyle = color; vctx.fillText(text, left + 8, y + 1);
+  };
+  pill("CURRENT", x, "#5b9cff", false);
+  pill(`REF #${ri + 1}`, x, "#ffb44a", true);
+  vctx.restore();
+}
+const nearSplit = (m) => {
+  if (!m || $("refMode").value !== "split" || refIndex() < 0 || playing) return false;
+  const x = split * comp.width * viewport.zoom + viewport.panX;
+  return Math.abs(m.x - x) < 10 && m.y >= viewport.panY && m.y <= viewport.panY + comp.height * viewport.zoom;
+};
 function marker(x, y) {
   vctx.beginPath(); vctx.arc(x, y, 6, 0, Math.PI * 2);
   vctx.moveTo(x - 11, y); vctx.lineTo(x + 11, y); vctx.moveTo(x, y - 11); vctx.lineTo(x, y + 11); vctx.stroke();
@@ -223,7 +266,8 @@ function syncCanvas() {
 }
 function fit() {
   if (!project.canvas) return;
-  const z = Math.min(view.clientWidth / comp.width, view.clientHeight / comp.height) * 0.95;
+  // leave room for the HUD (top) and hint/zoom bars (bottom)
+  const z = Math.min((view.clientWidth - 48) / comp.width, (view.clientHeight - 104) / comp.height);
   setZoom(z, view.clientWidth / 2, view.clientHeight / 2, true);
 }
 function setZoom(z, cx, cy, center = false) {
@@ -258,8 +302,12 @@ let drag = null;
 view.addEventListener("pointerdown", (e) => {
   if (!frame()) return;
   view.setPointerCapture(e.pointerId);
+  const rect = view.getBoundingClientRect();
+  mouse = { x: e.clientX - rect.left, y: e.clientY - rect.top };
   if (e.button === 1 || e.button === 2) {
     drag = { pan: true, sx: e.clientX, sy: e.clientY, px: viewport.panX, py: viewport.panY };
+  } else if (e.button === 0 && nearSplit(mouse)) {
+    drag = { split: true };
   } else if (e.button === 0 && $("markerTool").checked) {
     const r = view.getBoundingClientRect();
     const p = toCanvas(e.clientX - r.left, e.clientY - r.top);
@@ -276,8 +324,10 @@ view.addEventListener("pointerdown", (e) => {
 view.addEventListener("pointermove", (e) => {
   const r = view.getBoundingClientRect();
   mouse = { x: e.clientX - r.left, y: e.clientY - r.top };
-  if (!drag) { if ($("gCross").checked) render(); return; }
-  if (drag.pan) {
+  if (!drag) { view.classList.toggle("splitting", nearSplit(mouse)); if ($("gCross").checked) render(); return; }
+  if (drag.split) {
+    split = Math.min(Math.max(toCanvas(mouse.x, mouse.y).x / comp.width, 0), 1); render();
+  } else if (drag.pan) {
     viewport.panX = drag.px + e.clientX - drag.sx; viewport.panY = drag.py + e.clientY - drag.sy; render();
   } else {
     const f = frame();
@@ -287,7 +337,7 @@ view.addEventListener("pointermove", (e) => {
   }
 });
 const endDrag = () => {
-  if (drag && !drag.pan) { refreshTimeline(); save(); }
+  if (drag && !drag.pan && !drag.split) { refreshTimeline(); save(); }
   drag = null; view.classList.remove("dragging");
 };
 view.addEventListener("pointerup", endDrag);
@@ -323,7 +373,18 @@ function updatePanel() {
   $("frameLabel").textContent = f ? `${cur + 1} / ${project.frames.length}` : "–";
   $("hudName").textContent = f ? f.file.split("/").pop() : "";
   $("scrub").max = Math.max(0, project.frames.length - 1); $("scrub").value = cur;
+  const changedVal = { tx: f && f.x !== 0, ty: f && f.y !== 0, ts: f && f.scale !== 1, tr: f && f.rotation !== 0 };
+  for (const [id, on] of Object.entries(changedVal)) $(id).parentElement.classList.toggle("changed", !!on);
+  fillRanges();
 }
+// filled slider tracks: --p = percentage of the range
+function fillRanges() {
+  document.querySelectorAll("input[type=range]").forEach((r) => {
+    const p = ((r.value - r.min) / (r.max - r.min || 1)) * 100;
+    r.style.setProperty("--p", p + "%");
+  });
+}
+addEventListener("input", (e) => { if (e.target.type === "range") fillRanges(); });
 const fieldMap = { tx: ["x", 1], ty: ["y", 1], ts: ["scale", 100], tr: ["rotation", 1] };
 for (const [id, [key, mul]] of Object.entries(fieldMap)) {
   $(id).addEventListener("input", () => {
@@ -406,6 +467,7 @@ document.querySelectorAll("select[data-seg]").forEach((sel) => {
   for (const o of sel.options) {
     const b = document.createElement("button");
     b.textContent = o.text; b.dataset.v = o.value;
+    if (sel.id === "refMode") b.title = "Compare mode (O)";
     b.onclick = () => { sel.value = o.value; sel.dispatchEvent(new Event("change", { bubbles: true })); };
     seg.append(b);
   }
@@ -677,13 +739,37 @@ addEventListener("keydown", (e) => {
   if (handled) e.preventDefault();
 });
 
+// ---------- tooltips: title="Label (Key)" renders as a styled tip with a key cap ----------
+const tip = $("tip");
+let tipTimer = 0;
+document.addEventListener("pointerover", (e) => {
+  const el = e.target.closest("[title], [data-tip]");
+  if (!el || el.closest("#thumbs")) return;
+  if (el.title) { el.dataset.tip = el.title; el.removeAttribute("title"); }
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(() => {
+    const [, label, key] = el.dataset.tip.match(/^(.*?)(?:\s*\(([^)]+)\))?$/);
+    tip.textContent = label;
+    if (key) for (const k of key.split(" / ")) { const kb = document.createElement("kbd"); kb.textContent = k; tip.append(kb); }
+    tip.hidden = false;
+    const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    const below = r.bottom + t.height + 10 < innerHeight;
+    tip.style.left = Math.min(Math.max(r.left + r.width / 2 - t.width / 2, 6), innerWidth - t.width - 6) + "px";
+    tip.style.top = (below ? r.bottom + 8 : r.top - t.height - 8) + "px";
+  }, 400);
+});
+document.addEventListener("pointerout", (e) => {
+  if (e.target.closest("[data-tip]")) { clearTimeout(tipTimer); tip.hidden = true; }
+});
+addEventListener("pointerdown", () => { clearTimeout(tipTimer); tip.hidden = true; });
+
 // ---------- load ----------
 (async () => {
   project = normalize(await (await fetch("/api/project")).json());
   $("fps").value = project.fps; $("fpsVal").textContent = project.fps;
   $("loop").value = project.loop; $("background").value = project.background;
-  if (project.canvas) { syncCanvas(); fit(); }
   buildTimeline(); updatePanel(); go(0);
+  if (project.canvas) { syncCanvas(); fit(); } // after the timeline exists, so the stage has its final size
   syncFps(); syncSegs();
   status("Loaded", "ok");
 })();

@@ -194,3 +194,32 @@ dialog form { margin-top: 14px; text-align: right; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 5px; border: 2px solid var(--panel); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- polish ---------- */
+button:active:not(:disabled), .btn:active { transform: scale(.97); }
+input[type=range] { --p: 50%; }
+input[type=range]::-webkit-slider-runnable-track { background: linear-gradient(to right, var(--accent) var(--p), var(--line2) var(--p)); }
+input[type=range]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--accent); }
+input[type=range]::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(0,0,0,.35); transition: transform .1s; }
+input[type=range]:active::-webkit-slider-thumb { transform: scale(1.2); }
+
+.num { transition: border-color .12s, background .12s; }
+.num.changed { border-color: rgba(91,156,255,.45); background: rgba(91,156,255,.06); }
+.num.changed input { color: #cfe0ff; }
+
+.thumb:hover { transform: translateY(-2px); }
+#side details[open] > summary { color: var(--text); }
+
+#view.splitting { cursor: ew-resize; }
+
+#hints { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 12px; font-size: 11px; color: var(--faint); pointer-events: none; }
+#hints span { display: inline-flex; align-items: center; gap: 4px; }
+@media (max-width: 1250px) { #hints { display: none; } }
+kbd { font: 600 10px/1 ui-monospace, Consolas, monospace; color: var(--text); background: var(--raised); border: 1px solid var(--line2); border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px; }
+
+#tip { position: fixed; z-index: 100; pointer-events: none; display: flex; align-items: center; gap: 6px; max-width: 320px;
+  background: #26282f; color: var(--text); border: 1px solid var(--line2); border-radius: 6px; padding: 5px 9px; font-size: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5); animation: tipin .12s ease-out; }
+#tip kbd { background: var(--bg); }
+@keyframes tipin { from { opacity: 0; transform: translateY(2px); } }
+#toast { animation: tipin .15s ease-out; }

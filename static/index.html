@@ -22,7 +22,7 @@
 
 <header id="toolbar">
   <div class="brand"><span class="logo"></span>Frame Aligner</div>
-  <label class="btn primary" title="Add images (or drop files anywhere)"><svg><use href="#i-plus"/></svg>Add frames<input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
+  <label class="btn primary" title="Add images, or drop files anywhere"><svg><use href="#i-plus"/></svg>Add frames<input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
   <button id="rescan" class="ghost" title="Pick up images copied into project/frames by hand"><svg><use href="#i-refresh"/></svg>Rescan</button>
   <span class="grow"></span>
   <div class="group">
@@ -37,9 +37,9 @@
   <canvas id="view"></canvas>
   <div id="hud"><span id="hudName"></span><span id="hudBadges"></span></div>
   <div id="zoomBar">
-    <button id="zoomOut" class="icon" title="Viewport zoom out">−</button>
-    <span id="zoomVal" title="Viewport zoom (editor only, never exported)"></span>
-    <button id="zoomIn" class="icon" title="Viewport zoom in">+</button>
+    <button id="zoomOut" class="icon" title="Viewport zoom out (Ctrl+Wheel)">−</button>
+    <span id="zoomVal" title="Viewport zoom: only how you look, never exported"></span>
+    <button id="zoomIn" class="icon" title="Viewport zoom in (Ctrl+Wheel)">+</button>
     <button id="fit" title="Fit (F)">Fit</button>
     <button id="z100" title="100% (1)">1:1</button>
   </div>
@@ -53,6 +53,7 @@
     </label>
   </div>
   <div id="drop" hidden><div><svg><use href="#i-upload"/></svg><b>Drop to add frames</b><span id="dropHint"></span></div></div>
+  <div id="hints" hidden><span><kbd>Drag</kbd>move</span><span><kbd>Wheel</kbd>scale</span><span><kbd>Q</kbd><kbd>E</kbd>rotate</span><span><kbd>A</kbd><kbd>D</kbd>frames</span><span><kbd>O</kbd>compare mode</span><span><kbd>B</kbd>blink</span><span><kbd>Ctrl</kbd>+<kbd>Wheel</kbd>zoom view</span></div>
   <div id="toast" hidden></div>
 </main>
 
@@ -67,7 +68,7 @@
     </div>
     <p class="hint">Drag a label to scrub (Shift ×10).</p>
     <div class="row">
-      <button id="copyT">Copy</button><button id="pasteT">Paste</button><button id="resetT">Reset</button>
+      <button id="copyT" title="Copy transform (Ctrl+C)">Copy</button><button id="pasteT" title="Paste transform (Ctrl+V)">Paste</button><button id="resetT">Reset</button>
     </div>
     <div class="row"><button id="prevT">Copy from previous frame</button></div>
     <div class="field"><label>Duration</label><div class="num grow"><input id="dur" type="number" min="10" step="1" placeholder="auto"><i>ms</i></div></div>
@@ -75,10 +76,10 @@
 
   <details open>
     <summary>Reference</summary>
-    <select id="refMode" data-seg><option value="off">Off</option><option value="onion" selected>Onion</option><option value="diff">Difference</option></select>
+    <select id="refMode" data-seg><option value="off">Off</option><option value="onion" selected>Onion</option><option value="diff">Difference</option><option value="split">Split</option></select>
     <div class="field"><label>Frame</label><select id="refFrame"></select></div>
     <div class="field"><label>Opacity</label><input id="refOpacity" type="range" min="0" max="100" value="50"><span id="refOpacityVal" class="val">50%</span></div>
-    <div class="field"><label class="switch"><input id="blink" type="checkbox"><span></span>Blink</label><input id="blinkMs" type="range" min="80" max="1000" step="10" value="300"><span id="blinkMsVal" class="val">300ms</span></div>
+    <div class="field"><label class="switch" title="Alternate current and reference (B)"><input id="blink" type="checkbox"><span></span>Blink</label><input id="blinkMs" type="range" min="80" max="1000" step="10" value="300"><span id="blinkMsVal" class="val">300ms</span></div>
   </details>
 
   <details open>
@@ -97,7 +98,7 @@
       <label class="switch"><input type="checkbox" id="gMarkers" checked><span></span>Markers</label>
     </div>
     <div class="row">
-      <label class="toggle"><input type="checkbox" id="markerTool"><span>Place markers (M)</span></label>
+      <label class="toggle" title="Click the canvas to drop a marker, right-click one to delete (M)"><input type="checkbox" id="markerTool"><span>Place markers (M)</span></label>
       <button id="clearMarkers">Clear</button>
     </div>
   </details>
@@ -154,6 +155,7 @@
   <form method="dialog"><button class="primary">Close</button></form>
 </dialog>
 
+<div id="tip" hidden></div>
 <script type="module" src="/static/app.js"></script>
 </body>
 </html>
