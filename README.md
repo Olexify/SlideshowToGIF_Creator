@@ -1,6 +1,8 @@
 <img align="left" width="150" height="150" alt="SlideshowToGIF Creator icon" src="https://github.com/user-attachments/assets/74a08819-c89f-4df1-bcfc-f87e72dc07a1" />
 
-<h1>SlideshowToGIF Creator</h1>
+<p>
+  <strong><font size="6">SlideshowToGIF Creator</font></strong>
+</p>
 
 A local tool for <strong>reviewing AI-generated animation frames</strong>, manually aligning them, and exporting the result as <strong>GIF, MP4, or WebM</strong>.
 
