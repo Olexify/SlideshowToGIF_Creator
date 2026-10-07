@@ -317,3 +317,6 @@ button.addtile { background: transparent; }
 .loopItem { flex-wrap: wrap; }
 #thumbs.selecting .thumb:not(.sel):not(.processed) { opacity: .45; }
 #thumbs.selecting .thumb:not(.sel):not(.processed):hover { opacity: .8; }
+#tweenDlg { width: 560px; }
+#tweenDlg .switch { display: flex; margin: 12px 0 4px; }
+#twInfo { color: var(--muted); min-height: 1.4em; }

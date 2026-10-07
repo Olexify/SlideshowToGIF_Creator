@@ -120,6 +120,7 @@
       <label class="switch"><input type="checkbox" id="alRot" checked><span></span>Rotation</label>
     </div>
     <button id="alRun" class="primary wide" title="Find X/Y/scale/rotation for every frame (or the selected ones) automatically">Auto-align frames</button>
+    <button id="tweenBtn" class="wide" title="Generate new frames between existing ones (motion-compensated)">In-between frames…</button>
     <button id="anRun" class="wide" title="Score each frame against its neighbours, check the loop seam, find good loop ranges">Check quality &amp; loop</button>
     <p id="anState" class="hint"></p>
     <div id="anResult" hidden>
@@ -128,8 +129,9 @@
       <p id="anFlagged" class="hint"></p>
       <p id="anSeam"></p>
       <div class="row"><button id="anSelect">Select flagged</button><button id="anReplace" title="Swap each flagged frame for a copy of its nearest good neighbour (a hold). Originals go to Processed.">Replace with holds</button></div>
+      <div class="row"><button id="anReplaceTween" class="primary" title="Rebuild each flagged frame as an in-between of the good frames around it. Originals go to Processed.">Rebuild flagged from neighbours</button></div>
       <div class="row"><button id="anRetime" title="Set durations from measured motion: hold longer before a big jump, shorter before a tiny one">Even out motion</button><button id="anResetTiming" title="Every frame back to the FPS timing">Reset timing</button></div>
-      <div class="row"><button id="seamPlay">Preview seam</button></div>
+      <div class="row"><button id="anFill" title="Insert generated in-between frames wherever the motion jumps">Fill big jumps…</button><button id="seamPlay">Preview seam</button></div>
       <div class="field"><label>Best loops</label><span class="grow"></span><span class="hint">min</span><div class="num" style="width:70px"><input id="anMinLen" type="number" min="2" value="8"></div></div>
       <div id="anLoops"></div>
     </div>
@@ -205,6 +207,7 @@
   <div id="selBar" hidden>
     <b id="selCount"></b>
     <button id="selDup" title="Copy the selected frames right after the selection">Duplicate</button>
+    <button id="selTween" title="Generate in-between frames between the selected frames">In-betweens…</button>
     <button id="selDupRev" title="Copy them in reverse order, for a back-and-forth extension">Duplicate reversed</button>
     <button id="selOut" title="Take them out of the animation">Move to Processed</button>
     <button id="selKeep" title="Move every other frame to Processed">Keep only these</button>
@@ -213,6 +216,21 @@
   </div>
   <div id="thumbs"></div>
 </footer>
+
+<dialog id="tweenDlg">
+  <h3>In-between frames</h3>
+  <p class="hint">New frames are generated from the two neighbours as they are aligned now, and saved inside the project.</p>
+  <div class="field"><label>Where</label></div>
+  <select id="twWhere" data-seg><option value="sel">Selected frames</option><option value="current">After current</option><option value="jumps">Big jumps</option><option value="seam">Loop seam</option></select>
+  <div class="field" id="twJumpRow"><label>Jump above</label><input id="twJump" type="range" min="1.1" max="4" step="0.1" value="1.5"><span id="twJumpVal" class="val">1.5×</span></div>
+  <div class="field"><label>Per gap</label></div>
+  <select id="twCount" data-seg><option value="1">1 frame</option><option value="2">2 frames</option><option value="3">3 frames</option></select>
+  <div class="field"><label>Method</label></div>
+  <select id="twMethod" data-seg><option value="flow">Motion (follows movement)</option><option value="fade">Cross-fade</option></select>
+  <label class="switch" title="The gap keeps its length: the first frame and its in-betweens share its time. Off: the animation gets longer."><input id="twKeep" type="checkbox" checked><span></span>Keep timing (smoother, not slower)</label>
+  <p id="twInfo"></p>
+  <div class="spBtns"><button onclick="this.closest('dialog').close()">Cancel</button><button id="twGo" class="primary">Generate</button></div>
+</dialog>
 
 <dialog id="askDlg">
   <h3 id="askTitle"></h3>

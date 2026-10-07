@@ -5,6 +5,9 @@
 const CAP = 0.15; // per-pixel difference cap: moving parts of the drawing shouldn't dominate the match
 export const LEVELS = [96, 224, 448]; // coarse → fine sample widths
 
+// Let the page breathe during long work. Not setTimeout: hidden tabs throttle it to once a second.
+export const tick = () => new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); });
+
 const canvases = new Map();
 function surface(w, h) {
   const key = w + "x" + h;
@@ -102,7 +105,7 @@ export async function align(target, img, start, W, H,
         }
       }
       if (!moved) for (const k of keys) steps[k] /= 2;
-      if (evals % 30 === 0) { await new Promise((r) => setTimeout(r)); if (shouldStop()) return t; } // keep the UI alive
+      if (evals % 30 === 0) { await tick(); if (shouldStop()) return t; } // keep the UI alive
     }
   }
   return {

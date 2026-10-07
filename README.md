@@ -130,8 +130,34 @@ Side panel → **Auto align & loop**:
 | **Even out motion** | Sets per-frame durations from the measured motion: a frame is held longer before a big jump and shorter before a tiny one (0.6×–1.8× of the FPS timing). **Reset timing** undoes it. |
 | **Preview seam** | Plays the last 4 and first 4 frames on repeat, to judge the loop point. |
 
-Typical clean-up of a batch where some generations went wrong: **Auto-align frames → Replace with holds**
-(or **Select flagged → Move to Processed**) → **Even out motion**. To loop only part of it, click a range under
+### In-between frames
+
+**In-between frames…** (side panel, or **In-betweens…** with a selection) generates new frames between existing
+ones. It estimates how things move from one frame to the next and carries both frames to the moment in between.
+A moving character therefore travels halfway instead of showing as two faded copies. **Cross-fade** is available as
+a simple dissolve.
+
+| Where | New frames go |
+| --- | --- |
+| Selected frames | between each pair of selected frames |
+| After current | between the current frame and the next |
+| Big jumps | wherever motion jumps more than the set size (after a quality check) |
+| Loop seam | between the last frame and the first, so the loop joins smoothly |
+
+**Keep timing** (on by default) splits the original gap's time across the new frames, so the animation gets
+smoother, not slower. One Ctrl+Z removes everything a run added.
+
+**Rebuild flagged from neighbours** replaces bad frames with in-betweens of the good frames around them.
+**Fill big jumps…** opens the dialog for every big jump.
+
+Generated frames are saved inside the project (`files/`). Copies that no frame uses any more, such as in-betweens
+you undid, are cleaned up the next time the project is opened.
+
+Interpolation works best on moderate motion. Very large moves, or parts that appear or disappear, can leave smearing
+at edges. Check those frames, and remove or redo them if needed.
+
+Typical clean-up of a batch where some generations went wrong: **Auto-align frames → Rebuild flagged from neighbours**
+(or **Replace with holds**, or **Select flagged → Move to Processed**) → **Fill big jumps…** → **Even out motion**. To loop only part of it, click a range under
 **Best loops**. It stays highlighted, the timeline scrolls to it, and the other frames dim. Click it again to unselect.
 Then use **Keep only these** or **Duplicate**.
 
@@ -300,6 +326,11 @@ values directly into `project.json`.
 
 Automatic alignment (coarse-to-fine pattern search over x/y/scale/rotation on small grayscale renders)
 and the quality / loop scoring. It uses the same transform math as `render.js`.
+
+### `static/interpolate.js`
+
+In-between frames: coarse-to-fine block-matching motion in both directions, motion projected to the in-between
+moment, and occlusion-aware blending.
 
 ### `static/app.js`
 

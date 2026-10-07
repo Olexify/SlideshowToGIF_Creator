@@ -144,6 +144,21 @@ def resolve_image(pid, f):
     return p
 
 
+def prune_files(pid, proj):
+    """Delete copies in files/ that no frame refers to any more (e.g. in-betweens that were undone).
+    Undo history lives only in the open page, so on (re)opening a project nothing can bring them back."""
+    d = pdir(pid) / "files"
+    if not d.is_dir():
+        return
+    used = {x.get("file") for x in proj.get("frames", []) + proj.get("processed", [])}
+    cutoff = time.time() - 600  # fresh files may belong to a save that hasn't arrived yet
+    for f in d.iterdir():
+        if f"files/{f.name}" not in used and f.stat().st_mtime < cutoff:
+            f.unlink(missing_ok=True)
+    if not any(d.iterdir()):
+        d.rmdir()
+
+
 def copy_into(pid, src_name, data=None, src_path=None):
     d = pdir(pid) / "files"
     d.mkdir(parents=True, exist_ok=True)
@@ -331,7 +346,9 @@ class Handler(SimpleHTTPRequestHandler):
             d = pdir(pid)
             if rest == [] and m == "GET":
                 save_settings({"lastProject": pid})
-                return self.send_json(load_project(pid))
+                proj = load_project(pid)
+                prune_files(pid, proj)
+                return self.send_json(proj)
             if rest == [] and m == "PUT":
                 data = self.jbody()
                 if not isinstance(data, dict) or not isinstance(data.get("frames"), list):

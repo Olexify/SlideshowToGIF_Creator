@@ -1,5 +1,6 @@
 import { IDENTITY, drawFrame, renderExport } from "./render.js";
-import { align, analyze, frameTarget, medianTarget, sample } from "./analyze.js";
+import { align, analyze, frameTarget, medianTarget, sample, tick } from "./analyze.js";
+import { pair } from "./interpolate.js";
 
 const $ = (id) => document.getElementById(id);
 const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
@@ -798,7 +799,7 @@ $("alRun").onclick = async () => {
       // passes 2-3: align every frame (frame 1 too) to the median of all frames
       for (let pass = 2; pass <= 3 && !busy.stop; pass++) {
         $("anState").textContent = `Pass ${pass} of 3: building the consensus reference…`;
-        await new Promise((r) => setTimeout(r));
+        await tick();
         const target = medianTarget(frames.map((f) => ({ img: img(f.file), t: T(f) })), W, H);
         for (const [i, f] of frames.entries()) {
           if (busy.stop) break;
@@ -839,7 +840,7 @@ async function runCheck() {
   if (ok.includes(false)) return toast("Some frame files can't be found. Remove them first.", true, 5000);
   const before = $("anState").textContent;
   $("anState").textContent = "Checking frames…";
-  await new Promise((r) => setTimeout(r));
+  await tick();
   const { width: W, height: H } = project.canvas;
   const samples = frames.map((f) => sample(img(f.file), T(f), W, H, 128));
   checked = { frames, samples };
@@ -912,6 +913,44 @@ $("anReplace").onclick = () => {
   toast(`Replaced ${flagged.length} frame${flagged.length > 1 ? "s" : ""} with holds of their neighbours`);
 };
 
+// Rebuild each run of flagged frames from the good frames around it: k bad frames between good a and b
+// become k in-betweens of a → b. Runs at the very start or end have no frame on one side: they get holds.
+$("anReplaceTween").onclick = async () => {
+  const limit = $("anThresh").value / 100;
+  const fr = project.frames, bad = fr.map((f) => (quality.get(f) ?? 0) > limit);
+  if (!bad.includes(true)) return toast("No flagged frames");
+  if (!bad.includes(false)) return toast("Every frame is flagged; lower the threshold", true);
+  if (playing) togglePlay();
+  const runs = [];
+  for (let i = 0; i < fr.length; i++) if (bad[i] && !bad[i - 1]) { let j = i; while (bad[j + 1]) j++; runs.push([i, j]); }
+  const ok = await readyImages(fr);
+  if (ok.includes(false)) return toast("Some frame files can't be found. Remove them first.", true, 5000);
+  const plan = []; // [first bad index, last bad index, files | null]
+  try {
+    for (const [n, [i, j]] of runs.entries()) {
+      if (i === 0 || j === fr.length - 1) { plan.push([i, j, null]); continue; }
+      const files = await makeTweens(fr[i - 1], fr[j + 1], j - i + 1, "flow",
+        (k) => ($("anState").textContent = `Rebuilding ${n + 1} of ${runs.length}${k ? `: frame ${k}` : ""}…`));
+      plan.push([i, j, files]);
+    }
+  } catch (e) { $("anState").textContent = "Failed: " + e.message; return; }
+  $("anState").textContent = "";
+  checkpoint();
+  for (const [i, j, files] of plan) for (let x = i; x <= j; x++) {
+    const f = fr[x];
+    if (!project.processed.some((p) => p.file === f.file)) project.processed.push({ file: f.file });
+    const keep = files ? normalize({ frames: [{ file: files[x - i] }] }).frames[0]
+      : { ...fr[i === 0 ? j + 1 : i - 1] }; // edge run: hold the nearest good frame
+    keep.duration = f.duration;
+    fr[x] = keep;
+    quality.set(keep, 1);
+  }
+  sel.clear();
+  changed(true);
+  const total = plan.reduce((n, [i, j]) => n + j - i + 1, 0);
+  toast(`Rebuilt ${total} frame${total > 1 ? "s" : ""} from their neighbours. Originals are in Processed.`);
+};
+
 // Retime so motion looks steadier: hold a frame longer before a big jump, shorter before a tiny one.
 $("anRetime").onclick = async () => {
   if (!checked || !$("anStale").hidden) await runCheck(); // needs measurements of the current frames
@@ -933,6 +972,107 @@ $("anResetTiming").onclick = () => {
   project.frames.forEach((f) => (f.duration = null));
   changed(true);
   toast("Every frame uses the FPS timing again");
+};
+
+// ---------- in-between frames (interpolate.js) ----------
+// Gaps are [A, B] frame pairs; new frames go right after A.
+function tweenGaps(where) {
+  const fr = project.frames, n = fr.length;
+  if (where === "sel") {
+    const s = selected();
+    return s.slice(0, -1).map((f, i) => [f, s[i + 1]]);
+  }
+  if (where === "current") return cur < n - 1 ? [[fr[cur], fr[cur + 1]]] : [];
+  if (where === "seam") return n > 1 ? [[fr[n - 1], fr[0]]] : [];
+  if (where === "jumps") {
+    if (!checked?.res) return [];
+    const lim = +$("twJump").value;
+    return checked.frames.slice(0, -1).map((f, i) => [f, checked.frames[i + 1], checked.res.steps[i]])
+      .filter(([a, b, st]) => st > lim && fr.includes(a) && fr.includes(b) && fr.indexOf(b) === fr.indexOf(a) + 1)
+      .map(([a, b]) => [a, b]);
+  }
+  return [];
+}
+function updateTweenInfo() {
+  const gaps = tweenGaps($("twWhere").value), k = +$("twCount").value;
+  $("twJumpRow").hidden = $("twWhere").value !== "jumps";
+  $("twInfo").textContent = gaps.length
+    ? `${gaps.length} gap${gaps.length > 1 ? "s" : ""} × ${k} = ${gaps.length * k} new frame${gaps.length * k > 1 ? "s" : ""}.`
+    : { sel: "Select at least two frames first (Ctrl/Shift+click).", current: "There's no next frame after the current one.",
+        jumps: "No jumps above this size. Run the quality check first, or lower the threshold.", seam: "Needs at least two frames." }[$("twWhere").value];
+  $("twGo").disabled = !gaps.length;
+}
+async function openTween(where) {
+  if (where === "jumps" && (!checked || !$("anStale").hidden)) await runCheck();
+  if (!where) where = sel.size > 1 ? "sel" : "current";
+  $("twWhere").value = where; syncSegs();
+  updateTweenInfo();
+  $("tweenDlg").showModal();
+}
+for (const id of ["twWhere", "twCount", "twJump"]) $(id).addEventListener("change", updateTweenInfo);
+$("twJump").addEventListener("input", () => { $("twJumpVal").textContent = (+$("twJump").value).toFixed(1) + "×"; updateTweenInfo(); });
+$("tweenBtn").onclick = () => openTween();
+$("selTween").onclick = () => openTween("sel");
+$("anFill").onclick = () => openTween("jumps");
+// Generate k in-betweens for the pair (a, b) as rendered now; returns the new project files.
+async function makeTweens(a, b, k, method, progress = () => {}) {
+  const { width: W, height: H } = project.canvas;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  const render1 = (f) => { renderExport(g, img(f.file), T(f), project.background); return g.getImageData(0, 0, W, H); };
+  progress(0);
+  await tick();
+  const P = pair(render1(a), render1(b), method);
+  const files = [];
+  for (let i = 1; i <= k; i++) {
+    progress(i);
+    await tick();
+    g.putImageData(P.tween(i / (k + 1)), 0, 0);
+    const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+    const name = `${stem(a.file)}_tween${k > 1 ? "_" + i : ""}.png`;
+    files.push((await api(`/api/p/${pid}/upload?name=` + encodeURIComponent(name), { method: "POST", body: blob })).file);
+  }
+  return files;
+}
+$("twGo").onclick = async () => {
+  const gaps = tweenGaps($("twWhere").value), k = +$("twCount").value, method = $("twMethod").value;
+  if (!gaps.length || !project.canvas) return;
+  if (playing) togglePlay();
+  const ok = await readyImages(project.frames);
+  if (ok.includes(false)) return toast("Some frame files can't be found. Remove them first.", true, 5000);
+  $("twGo").disabled = true;
+  const made = new Map(); // A -> new files
+  try {
+    for (const [n, [a, b]] of gaps.entries()) {
+      made.set(a, await makeTweens(a, b, k, method, (i) => ($("twInfo").textContent =
+        `Gap ${n + 1} of ${gaps.length}: ${i ? `frame ${i} of ${k}…` : "measuring motion…"}`)));
+    }
+  } catch (e) {
+    $("twInfo").textContent = "Failed: " + e.message;
+    $("twGo").disabled = false;
+    return;
+  }
+  $("tweenDlg").close();
+  checkpoint(); // one undo step removes every new frame and restores the timing
+  const keep = $("twKeep").checked;
+  const curF = frame();
+  project.frames = project.frames.flatMap((f) => {
+    const files = made.get(f);
+    if (!files) return [f];
+    // rendered already aligned, so the new frames need no transform of their own
+    const tw = files.map((file) => normalize({ frames: [{ file }] }).frames[0]);
+    if (keep) { // the gap keeps its length: A and its in-betweens share A's time (20 ms minimum for GIF players)
+      const share = Math.max(20, Math.round(duration(f) / (files.length + 1)));
+      f.duration = share; tw.forEach((t) => (t.duration = share));
+    }
+    return [f, ...tw];
+  });
+  cur = Math.max(0, project.frames.indexOf(curF));
+  sel.clear();
+  changed(true);
+  const total = [...made.values()].reduce((n, f) => n + f.length, 0);
+  toast(`Added ${total} in-between frame${total > 1 ? "s" : ""}. Ctrl+Z removes them.`);
+  $("twGo").disabled = false;
 };
 
 // mouse wheel scrolls the timeline sideways

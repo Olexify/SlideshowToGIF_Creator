@@ -1,5 +1,7 @@
 """Self-check: python test_server.py  (needs ffmpeg on PATH)"""
 import json
+import os
+import time
 import struct
 import subprocess
 import tempfile
@@ -83,6 +85,15 @@ def main():
     b = call("POST", f"/api/p/{pid}/upload?name=evil.png", png(8, 8, (9, 9, 9)))[1]["file"]
     assert (a, b) == ("files/evil.png", "files/evil (2).png"), (a, b)
     assert call("POST", f"/api/p/{pid}/upload?name=x.exe", b"x")[0] == 400
+
+    # copies nothing refers to are pruned when the project is opened
+    call("PUT", f"/api/p/{pid}", {"name": "Fox walk", "frames": [{"file": a}]})
+    call("GET", f"/api/p/{pid}")
+    assert (data / "projects" / pid / b).exists()  # too fresh to prune
+    for f in (data / "projects" / pid / "files").iterdir():
+        os.utime(f, (time.time() - 3600,) * 2)
+    call("GET", f"/api/p/{pid}")
+    assert (data / "projects" / pid / a).exists() and not (data / "projects" / pid / b).exists()
 
     # save / load
     proj = {"name": "Fox walk", "canvas": {"width": 8, "height": 8}, "fps": 12,
