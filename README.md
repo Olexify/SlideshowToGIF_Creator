@@ -123,19 +123,25 @@ Side panel → **Auto align & loop**:
 
 | Button | What it does |
 | --- | --- |
-| **Auto-align frames** | Finds X/Y, scale and rotation for every frame (or only the selected ones) so it matches **Frame 1** or the **previous frame**. One Ctrl+Z undoes the whole run, and you can fine-tune by hand afterwards. Runs a quality check when done. |
+| **Auto-align frames** | Finds X/Y, scale and rotation for every frame (or only the selected ones). **All frames (best)** aligns everything to the per-pixel median of the whole sequence, so moving parts and bad frames don't pull the result. **Frame 1** and **Previous frame** are also available. One Ctrl+Z undoes the whole run. Runs a quality check when done. |
 | **Check quality & loop** | Scores every frame by how much it jumps compared with its neighbours (1× ≈ a normal step). Outliers get a red badge. Also rates the loop seam (last → first) and lists the **best loop ranges**. |
 | **Select flagged** | Selects every frame above the **Flag above** threshold, ready for **Move to Processed**. |
+| **Replace with holds** | Swaps each flagged frame for a copy of its nearest good neighbour, so the timing stays the same. The originals go to Processed. |
+| **Even out motion** | Sets per-frame durations from the measured motion: a frame is held longer before a big jump and shorter before a tiny one (0.6×–1.8× of the FPS timing). **Reset timing** undoes it. |
 | **Preview seam** | Plays the last 4 and first 4 frames on repeat, to judge the loop point. |
 
-Typical clean-up of a batch where some generations went wrong: **Auto-align frames → Select flagged →
-Move to Processed**, then pick a range from **Best loops** and click **Keep only these**.
+Typical clean-up of a batch where some generations went wrong: **Auto-align frames → Replace with holds**
+(or **Select flagged → Move to Processed**) → **Even out motion**. To loop only part of it, click a range under
+**Best loops**. It stays highlighted, the timeline scrolls to it, and the other frames dim. Click it again to unselect.
+Then use **Keep only these** or **Duplicate**.
+
+Matching ignores brightness and contrast differences between generations, and finishes with a fine pass for sub-pixel accuracy.
 
 Alignment works best when most of the picture (background, framing) stays the same between frames.
 
 ### Selecting frames
 
-**Ctrl+click** thumbnails to add or remove them, **Shift+click** for a range, and **Esc** to clear. With a selection you can:
+The mouse wheel scrolls the timeline. **Ctrl+click** thumbnails to add or remove them, **Shift+click** for a range, and **Esc** to clear. With a selection you can:
 
 - **Duplicate**: copy the frames right after the selection (to extend a good loop)
 - **Duplicate reversed**: copy them backwards (a back-and-forth extension)

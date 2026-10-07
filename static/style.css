@@ -312,3 +312,8 @@ button.addtile { background: transparent; }
 .good { color: var(--ok); }
 .warnTxt { color: var(--ref); }
 .badTxt { color: var(--err); }
+.loopItem.on { border-color: #b07bff; background: rgba(176,123,255,.15); box-shadow: inset 3px 0 0 #b07bff; }
+.loopItem.on::after { content: "selected · click to clear"; font-size: 10px; color: #cdb2ff; }
+.loopItem { flex-wrap: wrap; }
+#thumbs.selecting .thumb:not(.sel):not(.processed) { opacity: .45; }
+#thumbs.selecting .thumb:not(.sel):not(.processed):hover { opacity: .8; }

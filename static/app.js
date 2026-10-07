@@ -1,5 +1,5 @@
 import { IDENTITY, drawFrame, renderExport } from "./render.js";
-import { align, analyze, sample } from "./analyze.js";
+import { align, analyze, frameTarget, medianTarget, sample } from "./analyze.js";
 
 const $ = (id) => document.getElementById(id);
 const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
@@ -692,6 +692,11 @@ function buildTimeline() {
 function selBar() {
   $("selBar").hidden = !sel.size;
   $("selCount").textContent = `${sel.size} selected`;
+  $("thumbs").classList.toggle("selecting", sel.size > 1);
+  for (const b of $("anLoops").children) {
+    const inRange = b.range.filter((f) => project.frames.includes(f));
+    b.classList.toggle("on", sel.size > 0 && sel.size === inRange.length && inRange.every((f) => sel.has(f)));
+  }
 }
 function refreshTimeline() {
   selBar();
@@ -777,19 +782,45 @@ $("alRun").onclick = async () => {
   busy = { stop: false };
   $("alRun").textContent = "Stop"; $("anRun").disabled = true;
   checkpoint(); // one undo step for the whole run
+  const opts = { scale: $("alScale").checked, rotation: $("alRot").checked, shouldStop: () => busy.stop };
+  const show = (i) => { cur = i; updatePanel(); refreshTimeline(); render(); };
   let done = 0;
   try {
-    for (let i = 1; i < frames.length && !busy.stop; i++) {
-      const f = frames[i];
-      if (!targets.includes(f)) continue;
-      const ref = mode === "first" ? frames[0] : frames[i - 1];
-      $("anState").textContent = `Aligning frame ${i + 1} of ${frames.length}…`;
-      // start from the previous frame's alignment: neighbours usually need almost the same correction
-      const t = await align(img(ref.file), T(ref), img(f.file), T(frames[i - 1]), W, H,
-        { scale: $("alScale").checked, rotation: $("alRot").checked, shouldStop: () => busy.stop });
-      if (busy.stop) break;
-      Object.assign(f, t); done++;
-      cur = i; updatePanel(); refreshTimeline(); render();
+    if (mode === "consensus") {
+      // pass 1: rough registration to frame 1, so the median below is built from roughly aligned frames
+      for (let i = 1; i < frames.length && !busy.stop; i++) {
+        if (!targets.includes(frames[i])) continue;
+        $("anState").textContent = `Pass 1 of 3 (rough): frame ${i + 1} of ${frames.length}…`;
+        Object.assign(frames[i], await align(frameTarget(img(frames[0].file), T(frames[0]), W, H), img(frames[i].file),
+          T(frames[i - 1]), W, H, { ...opts, levels: [96, 224] }));
+        show(i);
+      }
+      // passes 2-3: align every frame (frame 1 too) to the median of all frames
+      for (let pass = 2; pass <= 3 && !busy.stop; pass++) {
+        $("anState").textContent = `Pass ${pass} of 3: building the consensus reference…`;
+        await new Promise((r) => setTimeout(r));
+        const target = medianTarget(frames.map((f) => ({ img: img(f.file), t: T(f) })), W, H);
+        for (const [i, f] of frames.entries()) {
+          if (busy.stop) break;
+          if (!targets.includes(f)) continue;
+          $("anState").textContent = `Pass ${pass} of 3: frame ${i + 1} of ${frames.length}…`;
+          Object.assign(f, await align(target, img(f.file), T(f), W, H, opts));
+          if (pass === 3) done++;
+          show(i);
+        }
+      }
+    } else {
+      for (let i = 1; i < frames.length && !busy.stop; i++) {
+        const f = frames[i];
+        if (!targets.includes(f)) continue;
+        const ref = mode === "first" ? frames[0] : frames[i - 1];
+        $("anState").textContent = `Aligning frame ${i + 1} of ${frames.length}…`;
+        // start from the previous frame's alignment: neighbours usually need almost the same correction
+        const t = await align(frameTarget(img(ref.file), T(ref), W, H), img(f.file), T(frames[i - 1]), W, H, opts);
+        if (busy.stop) break;
+        Object.assign(f, t); done++;
+        show(i);
+      }
     }
   } finally {
     const stopped = busy.stop;
@@ -837,17 +868,79 @@ function showCheck() {
     const meta = document.createElement("span");
     meta.textContent = `${l.len} frames · seam ${l.seam.toFixed(1)}×`;
     b.append(meta);
-    b.title = "Select this range. Then use \"Keep only these\" or \"Duplicate\".";
+    b.title = "Select this range (click again to unselect). Then use \"Keep only these\" or \"Duplicate\".";
+    b.range = checked.frames.slice(l.a, l.b + 1);
     b.onclick = () => {
+      const active = b.classList.contains("on");
       sel.clear();
-      checked.frames.slice(l.a, l.b + 1).forEach((f) => project.frames.includes(f) && sel.add(f));
+      if (!active) b.range.forEach((f) => project.frames.includes(f) && sel.add(f));
       refreshTimeline();
+      if (!active) { // bring the start of the range into view
+        const first = project.frames.findIndex((f) => sel.has(f));
+        $("thumbs").querySelectorAll(".thumb:not(.processed)")[first]?.scrollIntoView({ block: "nearest", inline: "start", behavior: "smooth" });
+      }
     };
     box.append(b);
   }
   refreshTimeline();
 }
 $("anRun").onclick = runCheck;
+
+// Replace each flagged frame with a copy of the nearest good frame before it (a hold), so the timing of the
+// sequence stays the same. The flagged images go to Processed.
+$("anReplace").onclick = () => {
+  const limit = $("anThresh").value / 100;
+  const bad = (f) => (quality.get(f) ?? 0) > limit;
+  const flagged = project.frames.filter(bad);
+  if (!flagged.length) return toast("No flagged frames");
+  if (flagged.length === project.frames.length) return toast("Every frame is flagged; lower the threshold", true);
+  if (playing) togglePlay();
+  checkpoint();
+  const frames = project.frames;
+  for (let i = 0; i < frames.length; i++) {
+    if (!flagged.includes(frames[i])) continue;
+    let j = i - 1;
+    while (j >= 0 && flagged.includes(frames[j])) j--;
+    if (j < 0) { j = i + 1; while (flagged.includes(frames[j])) j++; } // nothing good before: use the next good one
+    const f = frames[i];
+    if (!project.processed.some((p) => p.file === f.file)) project.processed.push({ file: f.file });
+    frames[i] = { ...frames[j], duration: f.duration }; // same picture and alignment, slot keeps its timing
+    quality.set(frames[i], 1);
+  }
+  sel.clear();
+  changed(true);
+  toast(`Replaced ${flagged.length} frame${flagged.length > 1 ? "s" : ""} with holds of their neighbours`);
+};
+
+// Retime so motion looks steadier: hold a frame longer before a big jump, shorter before a tiny one.
+$("anRetime").onclick = async () => {
+  if (!checked || !$("anStale").hidden) await runCheck(); // needs measurements of the current frames
+  if (!checked?.res) return;
+  const base = 1000 / project.fps;
+  checkpoint();
+  checked.frames.forEach((f, i) => {
+    if (!project.frames.includes(f)) return;
+    const k = Math.min(1.8, Math.max(0.6, checked.res.steps[i]));
+    f.duration = Math.round(base * k);
+  });
+  changed(true);
+  $("anStale").hidden = true; // durations don't change what the check measured
+  toast("Timing evened out. Undo or Reset timing to go back.");
+};
+$("anResetTiming").onclick = () => {
+  if (!project.frames.some((f) => f.duration)) return toast("Timing is already from FPS");
+  checkpoint();
+  project.frames.forEach((f) => (f.duration = null));
+  changed(true);
+  toast("Every frame uses the FPS timing again");
+};
+
+// mouse wheel scrolls the timeline sideways
+$("thumbs").addEventListener("wheel", (e) => {
+  if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+  e.preventDefault();
+  $("thumbs").scrollLeft += e.deltaY;
+}, { passive: false });
 $("anThresh").addEventListener("input", () => { $("anThreshVal").textContent = ($("anThresh").value / 100).toFixed(1) + "×"; showCheck(); });
 $("anMinLen").addEventListener("change", showCheck);
 $("anSelect").onclick = () => {

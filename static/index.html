@@ -114,7 +114,7 @@
 
   <details open>
     <summary>Auto align &amp; loop</summary>
-    <div class="field"><label>Align to</label><select id="alTarget"><option value="first">Frame 1</option><option value="prev">Previous frame (chain)</option></select></div>
+    <div class="field"><label>Align to</label><select id="alTarget" title="Consensus: match the median of all frames, so moving parts and bad frames don't pull the result"><option value="consensus">All frames (best)</option><option value="first">Frame 1</option><option value="prev">Previous frame (chain)</option></select></div>
     <div class="checks">
       <label class="switch"><input type="checkbox" id="alScale" checked><span></span>Scale</label>
       <label class="switch"><input type="checkbox" id="alRot" checked><span></span>Rotation</label>
@@ -127,7 +127,9 @@
       <div class="field"><label>Flag above</label><input id="anThresh" type="range" min="110" max="400" value="180"><span id="anThreshVal" class="val">1.8×</span></div>
       <p id="anFlagged" class="hint"></p>
       <p id="anSeam"></p>
-      <div class="row"><button id="anSelect">Select flagged</button><button id="seamPlay">Preview seam</button></div>
+      <div class="row"><button id="anSelect">Select flagged</button><button id="anReplace" title="Swap each flagged frame for a copy of its nearest good neighbour (a hold). Originals go to Processed.">Replace with holds</button></div>
+      <div class="row"><button id="anRetime" title="Set durations from measured motion: hold longer before a big jump, shorter before a tiny one">Even out motion</button><button id="anResetTiming" title="Every frame back to the FPS timing">Reset timing</button></div>
+      <div class="row"><button id="seamPlay">Preview seam</button></div>
       <div class="field"><label>Best loops</label><span class="grow"></span><span class="hint">min</span><div class="num" style="width:70px"><input id="anMinLen" type="number" min="2" value="8"></div></div>
       <div id="anLoops"></div>
     </div>
