@@ -117,6 +117,33 @@ Images that shouldn't be part of the animation, such as a sprite sheet after spl
 They stay in the project in a dimmed **Processed** group at the end of the timeline. They are skipped
 by playback, comparison and export. Use **Restore** to put one back into the animation.
 
+## Auto align, quality check and loops
+
+Side panel → **Auto align & loop**:
+
+| Button | What it does |
+| --- | --- |
+| **Auto-align frames** | Finds X/Y, scale and rotation for every frame (or only the selected ones) so it matches **Frame 1** or the **previous frame**. One Ctrl+Z undoes the whole run, and you can fine-tune by hand afterwards. Runs a quality check when done. |
+| **Check quality & loop** | Scores every frame by how much it jumps compared with its neighbours (1× ≈ a normal step). Outliers get a red badge. Also rates the loop seam (last → first) and lists the **best loop ranges**. |
+| **Select flagged** | Selects every frame above the **Flag above** threshold, ready for **Move to Processed**. |
+| **Preview seam** | Plays the last 4 and first 4 frames on repeat, to judge the loop point. |
+
+Typical clean-up of a batch where some generations went wrong: **Auto-align frames → Select flagged →
+Move to Processed**, then pick a range from **Best loops** and click **Keep only these**.
+
+Alignment works best when most of the picture (background, framing) stays the same between frames.
+
+### Selecting frames
+
+**Ctrl+click** thumbnails to add or remove them, **Shift+click** for a range, and **Esc** to clear. With a selection you can:
+
+- **Duplicate**: copy the frames right after the selection (to extend a good loop)
+- **Duplicate reversed**: copy them backwards (a back-and-forth extension)
+- **Move to Processed**, or **Keep only these** (moves everything else)
+
+Drag a frame onto the **Processed** group to take it out, and drag a processed image back onto the timeline
+to put it where you drop it.
+
 ## Canvas size
 
 The canvas (output size) is taken from the first image you add. If the current image has a different
@@ -262,6 +289,11 @@ x / y / scale / rotation
 ```
 
 values directly into `project.json`.
+
+### `static/analyze.js`
+
+Automatic alignment (coarse-to-fine pattern search over x/y/scale/rotation on small grayscale renders)
+and the quality / loop scoring. It uses the same transform math as `render.js`.
 
 ### `static/app.js`
 

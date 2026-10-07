@@ -113,6 +113,27 @@
   </details>
 
   <details open>
+    <summary>Auto align &amp; loop</summary>
+    <div class="field"><label>Align to</label><select id="alTarget"><option value="first">Frame 1</option><option value="prev">Previous frame (chain)</option></select></div>
+    <div class="checks">
+      <label class="switch"><input type="checkbox" id="alScale" checked><span></span>Scale</label>
+      <label class="switch"><input type="checkbox" id="alRot" checked><span></span>Rotation</label>
+    </div>
+    <button id="alRun" class="primary wide" title="Find X/Y/scale/rotation for every frame (or the selected ones) automatically">Auto-align frames</button>
+    <button id="anRun" class="wide" title="Score each frame against its neighbours, check the loop seam, find good loop ranges">Check quality &amp; loop</button>
+    <p id="anState" class="hint"></p>
+    <div id="anResult" hidden>
+      <p id="anStale" class="hint warnTxt" hidden>Frames changed since the check. Run it again for fresh results.</p>
+      <div class="field"><label>Flag above</label><input id="anThresh" type="range" min="110" max="400" value="180"><span id="anThreshVal" class="val">1.8×</span></div>
+      <p id="anFlagged" class="hint"></p>
+      <p id="anSeam"></p>
+      <div class="row"><button id="anSelect">Select flagged</button><button id="seamPlay">Preview seam</button></div>
+      <div class="field"><label>Best loops</label><span class="grow"></span><span class="hint">min</span><div class="num" style="width:70px"><input id="anMinLen" type="number" min="2" value="8"></div></div>
+      <div id="anLoops"></div>
+    </div>
+  </details>
+
+  <details open>
     <summary>Reference</summary>
     <select id="refMode" data-seg><option value="off">Off</option><option value="onion" selected>Onion</option><option value="diff">Difference</option><option value="split">Split</option></select>
     <div class="field"><label>Frame</label><select id="refFrame"></select></div>
@@ -178,6 +199,15 @@
     </div>
     <span id="frameLabel" class="counter"></span>
     <input id="scrub" type="range" min="0" max="0" value="0">
+  </div>
+  <div id="selBar" hidden>
+    <b id="selCount"></b>
+    <button id="selDup" title="Copy the selected frames right after the selection">Duplicate</button>
+    <button id="selDupRev" title="Copy them in reverse order, for a back-and-forth extension">Duplicate reversed</button>
+    <button id="selOut" title="Take them out of the animation">Move to Processed</button>
+    <button id="selKeep" title="Move every other frame to Processed">Keep only these</button>
+    <button id="selClear" class="ghost" title="Clear selection (Esc)">Clear</button>
+    <span class="hint">Ctrl+click to add · Shift+click for a range</span>
   </div>
   <div id="thumbs"></div>
 </footer>

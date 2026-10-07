@@ -289,3 +289,26 @@ button.addtile { background: transparent; }
 #sizeWarn { position: absolute; top: 46px; left: 12px; display: flex; align-items: center; gap: 10px; font-size: 12px;
   background: rgba(40,30,10,.9); border: 1px solid rgba(255,180,74,.5); color: var(--ref); padding: 4px 4px 4px 12px; border-radius: 99px; }
 #sizeWarn button { padding: 2px 10px; border-radius: 99px; font-size: 12px; }
+
+/* ---------- selection, quality, auto-align ---------- */
+.thumb.sel { border-color: #b07bff; box-shadow: 0 0 0 2px #b07bff; }
+.thumb.sel.cur { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px #b07bff; }
+.thumb .q { position: absolute; right: 4px; top: 4px; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 99px; background: rgba(0,0,0,.75); }
+.thumb .q.ok { color: var(--ok); }
+.thumb .q.warn { color: var(--ref); }
+.thumb .q.bad { color: #fff; background: var(--err); }
+.thumb:has(.q.bad) { border-color: var(--err); }
+.thumb:hover .q { opacity: 0; }
+#selBar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding: 6px 8px; border-radius: 8px;
+  background: rgba(176,123,255,.1); border: 1px solid rgba(176,123,255,.35); }
+#selBar b { color: #cdb2ff; margin-right: 4px; }
+#selBar button { padding: 3px 10px; }
+#selBar .hint { margin: 0 0 0 auto; }
+.procHead.empty { opacity: .6; }
+.procHead.procover, .thumb.processed.procover { outline: 2px dashed var(--ok); outline-offset: 2px; }
+.loopItem { width: 100%; justify-content: space-between; margin-top: 4px; background: var(--bg); }
+.loopItem span { color: var(--muted); font-size: 11px; }
+#anSeam { margin: 6px 0; font-size: 12px; }
+.good { color: var(--ok); }
+.warnTxt { color: var(--ref); }
+.badTxt { color: var(--err); }

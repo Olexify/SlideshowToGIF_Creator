@@ -1,4 +1,5 @@
 import { IDENTITY, drawFrame, renderExport } from "./render.js";
+import { align, analyze, sample } from "./analyze.js";
 
 const $ = (id) => document.getElementById(id);
 const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
@@ -17,6 +18,10 @@ async function api(path, { method = "GET", body, json, keepalive } = {}) {
 
 // ---------- state ----------
 let pid = null; // current project id
+const sel = new Set();       // selected frames (objects, so it survives reordering)
+let quality = new Map();     // frame -> jump score from the last check (1 ≈ a normal step)
+let checked = null;          // last check: { frames, samples, res }
+let playSeq = null;          // when set, playback cycles these indices (seam preview)
 let settings = {};
 let project = { frames: [] };
 let cur = 0;
@@ -129,6 +134,7 @@ function restore(from, to) {
 
 // Call after any edit. timeline=true when order/durations/frame list changed.
 function changed(timeline = false) {
+  if (checked) $("anStale").hidden = false;
   if (!project.frames.length && project.canvas) delete project.canvas; // next image added sets the size again
   if (timeline) buildTimeline(); else refreshTimeline();
   updatePanel();
@@ -525,6 +531,7 @@ function go(i) {
 }
 function nextIndex() {
   const n = project.frames.length;
+  if (playSeq) return playSeq[(playSeq.indexOf(cur) + 1) % playSeq.length];
   if (project.loop !== "pingpong" || n < 2) return cur + 1;
   if (cur + pingDir >= n || cur + pingDir < 0) pingDir = -pingDir;
   return cur + pingDir;
@@ -533,6 +540,7 @@ function togglePlay() {
   playing = !playing;
   $("play").querySelector("use").setAttribute("href", playing ? "#i-pause" : "#i-play");
   clearTimeout(playTimer);
+  if (!playing) { playSeq = null; $("seamPlay").textContent = "Preview seam"; }
   if (playing) {
     project.frames.forEach((f) => img(f.file));
     pingDir = 1;
@@ -552,14 +560,22 @@ $("redo").onclick = () => restore(redoStack, undoStack);
 $("help").onclick = () => $("helpDlg").showModal();
 
 // ---------- timeline ----------
-let dragFrom = -1;
+let dragFrom = -1, dragProc = -1; // index of the animation frame / processed image being dragged
+function restoreProcessed(pi, at = null) {
+  if (playing) togglePlay();
+  checkpoint();
+  const [p] = project.processed.splice(pi, 1);
+  insertFrame(p.file, at);
+  cur = at ?? project.frames.findIndex((x) => x.file === p.file);
+  changed(true);
+}
 const isFileDrag = (e) => e.dataTransfer?.types.includes("Files");
 function moveFrame(from, to) {
   checkpoint();
-  const curFile = frame().file;
+  const curF = frame();
   const [moved] = project.frames.splice(from, 1);
   project.frames.splice(to, 0, moved);
-  cur = project.frames.findIndex((x) => x.file === curFile);
+  cur = project.frames.indexOf(curF);
   changed(true);
 }
 function buildTimeline() {
@@ -567,7 +583,7 @@ function buildTimeline() {
   project.frames.forEach((f, i) => {
     const el = document.createElement("div");
     el.className = "thumb"; el.draggable = true;
-    el.innerHTML = `<div class="pic"><img loading="lazy"><span class="no"></span><span class="reftag">REF</span><span class="dirty" title="Aligned (has a transform)"></span></div>
+    el.innerHTML = `<div class="pic"><img loading="lazy"><span class="no"></span><span class="reftag">REF</span><span class="dirty" title="Aligned (has a transform)"></span><span class="q"></span></div>
       <div class="name"></div>
       <div class="meta"><input type="number" min="10" step="1" title="Hold duration in ms (empty = from FPS)"><span>ms</span></div>
       <button class="del" title="Remove from project (file is kept)">×</button>
@@ -586,12 +602,25 @@ function buildTimeline() {
       project.frames.splice(i, 1); if (cur >= project.frames.length) cur = Math.max(0, project.frames.length - 1);
       changed(true);
     };
-    el.onclick = () => { if (playing) togglePlay(); go(i); };
-    el.ondragstart = (e) => { dragFrom = i; e.dataTransfer.effectAllowed = "move"; el.classList.add("dragging"); };
+    el.onclick = (e) => {
+      if (playing) togglePlay();
+      if (e.ctrlKey || e.metaKey) { // toggle in selection (the current frame joins a fresh selection)
+        if (!sel.size && frame() !== f) sel.add(frame());
+        sel.has(f) ? sel.delete(f) : sel.add(f);
+        return refreshTimeline();
+      }
+      if (e.shiftKey) { // range from the current frame
+        sel.clear();
+        for (let k = Math.min(cur, i); k <= Math.max(cur, i); k++) sel.add(project.frames[k]);
+        return refreshTimeline();
+      }
+      sel.clear(); go(i);
+    };
+    el.ondragstart = (e) => { dragFrom = i; dragProc = -1; e.dataTransfer.effectAllowed = "move"; el.classList.add("dragging"); };
     el.ondragend = () => { dragFrom = -1; el.classList.remove("dragging"); };
     el.ondragover = (e) => {
       const files = isFileDrag(e);
-      if (dragFrom < 0 && !files) return;
+      if (dragFrom < 0 && dragProc < 0 && !files) return;
       e.preventDefault(); e.stopPropagation();
       el.classList.add("over"); el.classList.toggle("dropfiles", files);
     };
@@ -599,8 +628,9 @@ function buildTimeline() {
     el.ondrop = (e) => {
       e.preventDefault(); e.stopPropagation(); el.classList.remove("over", "dropfiles"); hideDrop();
       if (isFileDrag(e)) return dropFiles(e.dataTransfer.files, i); // insert before this frame
-      if (dragFrom >= 0 && dragFrom !== i) moveFrame(dragFrom, i);
-      dragFrom = -1;
+      if (dragProc >= 0) restoreProcessed(dragProc, i);
+      else if (dragFrom >= 0 && dragFrom !== i) moveFrame(dragFrom, i);
+      dragFrom = dragProc = -1;
     };
     box.append(el);
   });
@@ -608,48 +638,75 @@ function buildTimeline() {
   const add = document.createElement("button");
   add.className = "addtile pickFiles";
   add.innerHTML = `<svg><use href="#i-plus"/></svg>Add frames`;
-  add.ondragover = (e) => { if (dragFrom < 0 && !isFileDrag(e)) return; e.preventDefault(); e.stopPropagation(); add.classList.add("dropfiles"); };
+  add.ondragover = (e) => { if (dragFrom < 0 && dragProc < 0 && !isFileDrag(e)) return; e.preventDefault(); e.stopPropagation(); add.classList.add("dropfiles"); };
   add.ondragleave = () => add.classList.remove("dropfiles");
   add.ondrop = (e) => {
     e.preventDefault(); e.stopPropagation(); add.classList.remove("dropfiles"); hideDrop();
     if (isFileDrag(e)) return dropFiles(e.dataTransfer.files, project.frames.length);
-    if (dragFrom >= 0) moveFrame(dragFrom, project.frames.length - 1);
-    dragFrom = -1;
+    if (dragProc >= 0) restoreProcessed(dragProc, project.frames.length);
+    else if (dragFrom >= 0) moveFrame(dragFrom, project.frames.length - 1);
+    dragFrom = dragProc = -1;
   };
   box.append(add);
-  if (project.processed.length) {
+  // dropping an animation frame on the Processed group takes it out of the animation
+  const procDrop = (el) => {
+    el.addEventListener("dragover", (e) => { if (dragFrom < 0) return; e.preventDefault(); e.stopPropagation(); el.classList.add("procover"); });
+    el.addEventListener("dragleave", () => el.classList.remove("procover"));
+    el.addEventListener("drop", (e) => {
+      if (dragFrom < 0) return;
+      e.preventDefault(); e.stopPropagation(); el.classList.remove("procover");
+      markProcessed(dragFrom); dragFrom = -1;
+    });
+  };
+  {
     const head = document.createElement("div");
     head.className = "procHead";
     head.innerHTML = `<b>Processed</b><span></span>`;
-    head.querySelector("span").textContent = `${project.processed.length} · not animated`;
+    head.querySelector("span").textContent = project.processed.length ? `${project.processed.length} · not animated` : "drag frames here";
+    head.classList.toggle("empty", !project.processed.length);
+    procDrop(head);
     box.append(head);
     project.processed.forEach((p, i) => {
       const el = document.createElement("div");
       el.className = "thumb processed";
-      el.title = p.file;
+      el.title = p.file; el.draggable = true;
+      el.ondragstart = (e) => { dragProc = i; dragFrom = -1; e.dataTransfer.effectAllowed = "move"; el.classList.add("dragging"); };
+      el.ondragend = () => { dragProc = -1; el.classList.remove("dragging"); };
+      procDrop(el);
       el.innerHTML = `<div class="pic"><img loading="lazy"></div><div class="name"></div>
         <div class="row"><button class="restore" title="Put back into the animation">Restore</button><button class="del2" title="Remove from project (file is kept)">×</button></div>`;
       el.querySelector("img").src = urlOf(p.file);
       el.querySelector(".name").textContent = stem(p.file);
-      el.querySelector(".restore").onclick = () => {
-        checkpoint(); project.processed.splice(i, 1);
-        if (playing) togglePlay();
-        insertFrame(p.file); cur = project.frames.findIndex((x) => x.file === p.file); changed(true);
-      };
+      el.querySelector(".restore").onclick = () => restoreProcessed(i);
       el.querySelector(".del2").onclick = () => { checkpoint(); project.processed.splice(i, 1); changed(true); };
       box.append(el);
     });
   }
   // reference frame list
-  const sel = $("refFrame"), keep = sel.value || "prev";
-  sel.innerHTML = `<option value="prev">Previous frame</option><option value="next">Next frame</option><option value="first">Frame 1</option>`;
-  project.frames.forEach((f, i) => sel.add(new Option(`#${i + 1}  ${stem(f.file)}`, f.file)));
-  sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "prev";
+  const refSel = $("refFrame"), keep = refSel.value || "prev";
+  refSel.innerHTML = `<option value="prev">Previous frame</option><option value="next">Next frame</option><option value="first">Frame 1</option>`;
+  project.frames.forEach((f, i) => refSel.add(new Option(`#${i + 1}  ${stem(f.file)}`, f.file)));
+  refSel.value = [...refSel.options].some((o) => o.value === keep) ? keep : "prev";
   refreshTimeline();
 }
+function selBar() {
+  $("selBar").hidden = !sel.size;
+  $("selCount").textContent = `${sel.size} selected`;
+}
 function refreshTimeline() {
+  selBar();
   const ri = refIndex(), auto = Math.round(1000 / project.fps);
+  for (const f of sel) if (!project.frames.includes(f)) sel.delete(f);
+  const limit = $("anThresh").value / 100;
   $("thumbs").querySelectorAll(".thumb:not(.processed)").forEach((el, i) => {
+    const f = project.frames[i], q = quality.get(f), qEl = el.querySelector(".q");
+    el.classList.toggle("sel", sel.has(f));
+    qEl.hidden = q === undefined;
+    if (q !== undefined) {
+      qEl.textContent = q > 9.9 ? ">10×" : q.toFixed(1) + "×";
+      qEl.className = "q " + (q > limit ? "bad" : q > (1 + limit) / 2 ? "warn" : "ok");
+      qEl.title = `Jump vs. neighbours: ${q.toFixed(2)}× a normal step`;
+    }
     el.classList.toggle("cur", i === cur);
     el.classList.toggle("ref", i === ri && $("refMode").value !== "off");
     el.querySelector(".dirty").hidden = isIdentity(project.frames[i]);
@@ -664,12 +721,151 @@ function markProcessed(i = cur) {
   if (playing) togglePlay();
   checkpoint();
   project.frames.splice(i, 1);
-  project.processed.push({ file: f.file });
+  if (!project.processed.some((p) => p.file === f.file)) project.processed.push({ file: f.file });
   if (cur >= project.frames.length) cur = Math.max(0, project.frames.length - 1);
   changed(true);
   toast(`"${stem(f.file)}" moved to Processed`);
 }
 $("procBtn").onclick = () => markProcessed();
+
+// ---------- selection operations ----------
+const selected = () => project.frames.filter((f) => sel.has(f)); // in timeline order
+function duplicateSel(reverse) {
+  const order = selected(); if (!order.length) return;
+  checkpoint();
+  const copies = order.map((f) => ({ ...f }));
+  if (reverse) copies.reverse();
+  const after = Math.max(...order.map((f) => project.frames.indexOf(f)));
+  project.frames.splice(after + 1, 0, ...copies);
+  sel.clear(); copies.forEach((c) => sel.add(c)); // select the copies, so another click extends again
+  cur = after + 1;
+  changed(true);
+  toast(`Added ${copies.length} frame${copies.length > 1 ? "s" : ""}${reverse ? " in reverse" : ""}`);
+}
+function moveOut(frames) {
+  if (!frames.length) return;
+  if (playing) togglePlay();
+  checkpoint();
+  const curF = frame();
+  for (const f of frames) if (!project.processed.some((p) => p.file === f.file)) project.processed.push({ file: f.file });
+  project.frames = project.frames.filter((f) => !frames.includes(f));
+  sel.clear();
+  cur = Math.max(0, project.frames.includes(curF) ? project.frames.indexOf(curF) : Math.min(cur, project.frames.length - 1));
+  changed(true);
+  toast(`Moved ${frames.length} frame${frames.length > 1 ? "s" : ""} to Processed`);
+}
+$("selDup").onclick = () => duplicateSel(false);
+$("selDupRev").onclick = () => duplicateSel(true);
+$("selOut").onclick = () => moveOut(selected());
+$("selKeep").onclick = () => moveOut(project.frames.filter((f) => !sel.has(f)));
+$("selClear").onclick = () => { sel.clear(); refreshTimeline(); };
+
+// ---------- auto-align and quality / loop check (math lives in analyze.js) ----------
+let busy = null;
+async function readyImages(frames) {
+  return Promise.all(frames.map((f) => loaded(img(f.file)).then(() => true, () => false)));
+}
+$("alRun").onclick = async () => {
+  if (busy) { busy.stop = true; return; }
+  const frames = project.frames;
+  if (frames.length < 2 || !project.canvas) return toast("Add at least two frames first", true);
+  const targets = sel.size ? selected() : frames;
+  const mode = $("alTarget").value, W = project.canvas.width, H = project.canvas.height;
+  const ok = await readyImages(frames);
+  if (ok.includes(false)) return toast("Some frame files can't be found. Remove them first.", true, 5000);
+  if (playing) togglePlay();
+  busy = { stop: false };
+  $("alRun").textContent = "Stop"; $("anRun").disabled = true;
+  checkpoint(); // one undo step for the whole run
+  let done = 0;
+  try {
+    for (let i = 1; i < frames.length && !busy.stop; i++) {
+      const f = frames[i];
+      if (!targets.includes(f)) continue;
+      const ref = mode === "first" ? frames[0] : frames[i - 1];
+      $("anState").textContent = `Aligning frame ${i + 1} of ${frames.length}…`;
+      // start from the previous frame's alignment: neighbours usually need almost the same correction
+      const t = await align(img(ref.file), T(ref), img(f.file), T(frames[i - 1]), W, H,
+        { scale: $("alScale").checked, rotation: $("alRot").checked, shouldStop: () => busy.stop });
+      if (busy.stop) break;
+      Object.assign(f, t); done++;
+      cur = i; updatePanel(); refreshTimeline(); render();
+    }
+  } finally {
+    const stopped = busy.stop;
+    busy = null;
+    $("alRun").textContent = "Auto-align frames"; $("anRun").disabled = false;
+    changed(true);
+    $("anState").textContent = `${stopped ? "Stopped. " : ""}Aligned ${done} frame${done === 1 ? "" : "s"}. Ctrl+Z undoes the whole run.`;
+  }
+  if (done) runCheck();
+};
+
+async function runCheck() {
+  const frames = project.frames.slice();
+  if (frames.length < 3 || !project.canvas) return toast("Add at least three frames first", true);
+  const ok = await readyImages(frames);
+  if (ok.includes(false)) return toast("Some frame files can't be found. Remove them first.", true, 5000);
+  const before = $("anState").textContent;
+  $("anState").textContent = "Checking frames…";
+  await new Promise((r) => setTimeout(r));
+  const { width: W, height: H } = project.canvas;
+  const samples = frames.map((f) => sample(img(f.file), T(f), W, H, 128));
+  checked = { frames, samples };
+  showCheck();
+  $("anState").textContent = before.startsWith("Checking") ? "" : before;
+}
+function showCheck() {
+  if (!checked) return;
+  const res = analyze(checked.samples, { minLoop: Math.max(2, parseInt($("anMinLen").value) || 8) });
+  checked.res = res;
+  quality = new Map(checked.frames.map((f, i) => [f, res.score[i]]));
+  const limit = $("anThresh").value / 100;
+  const flagged = checked.frames.filter((f, i) => res.score[i] > limit && project.frames.includes(f));
+  $("anResult").hidden = false; $("anStale").hidden = true;
+  $("anFlagged").textContent = flagged.length ? `${flagged.length} frame${flagged.length > 1 ? "s" : ""} jump more than ${limit.toFixed(1)}× a normal step.` : "No frames stand out.";
+  $("anSelect").disabled = !flagged.length;
+  const s = res.seam;
+  $("anSeam").textContent = `Loop seam (last → first): ${s.toFixed(1)}× a normal step, ` +
+    (s <= 1.3 ? "smooth." : s <= 2 ? "a slight jump." : "a visible jump.");
+  $("anSeam").className = s <= 1.3 ? "good" : s <= 2 ? "warnTxt" : "badTxt";
+  const box = $("anLoops"); box.textContent = "";
+  for (const l of res.loops) {
+    const b = document.createElement("button");
+    b.className = "loopItem";
+    b.textContent = `Frames ${l.a + 1}–${l.b + 1}`;
+    const meta = document.createElement("span");
+    meta.textContent = `${l.len} frames · seam ${l.seam.toFixed(1)}×`;
+    b.append(meta);
+    b.title = "Select this range. Then use \"Keep only these\" or \"Duplicate\".";
+    b.onclick = () => {
+      sel.clear();
+      checked.frames.slice(l.a, l.b + 1).forEach((f) => project.frames.includes(f) && sel.add(f));
+      refreshTimeline();
+    };
+    box.append(b);
+  }
+  refreshTimeline();
+}
+$("anRun").onclick = runCheck;
+$("anThresh").addEventListener("input", () => { $("anThreshVal").textContent = ($("anThresh").value / 100).toFixed(1) + "×"; showCheck(); });
+$("anMinLen").addEventListener("change", showCheck);
+$("anSelect").onclick = () => {
+  const limit = $("anThresh").value / 100;
+  sel.clear();
+  project.frames.forEach((f) => { if ((quality.get(f) ?? 0) > limit) sel.add(f); });
+  refreshTimeline();
+};
+$("seamPlay").onclick = () => {
+  if (playSeq) return togglePlay(); // stop
+  const n = project.frames.length; if (n < 2) return;
+  const k = Math.min(4, Math.floor(n / 2));
+  if (playing) togglePlay();
+  playSeq = [...Array(k).keys()].map((i) => n - k + i).concat([...Array(k).keys()]);
+  go(playSeq[0]);
+  togglePlay(); // keeps playSeq while playing, clears it on stop
+  $("seamPlay").textContent = "Stop seam preview";
+};
 
 // ---------- adding frames ----------
 // Without a position, new files go before the first frame whose name sorts after them,
@@ -956,6 +1152,7 @@ function resetEditor() {
   setBlink(false);
   undoStack.length = 0; redoStack.length = 0; lastKey = null;
   images.clear(); cur = 0; lastBadges = null;
+  sel.clear(); quality = new Map(); checked = null; $("anResult").hidden = true; $("anState").textContent = "";
 }
 async function openProject(id) {
   if (saveTimer) await flushSave();
@@ -1049,7 +1246,7 @@ addEventListener("pointerup", () => { const a = document.activeElement; if (a?.m
 addEventListener("change", (e) => { if (e.target.matches("select, input[type=checkbox], input[type=range]")) e.target.blur(); });
 addEventListener("keydown", (e) => {
   const t = e.target;
-  if (t.matches("input[type=number], input[type=text], textarea")) { if (e.key === "Enter" || e.key === "Escape") t.blur(); return; }
+  if (t.matches?.("input[type=number], input[type=text], textarea")) { if (e.key === "Enter" || e.key === "Escape") t.blur(); return; }
   if (document.querySelector("dialog[open]")) return;
   const k = e.key, ctrl = e.ctrlKey || e.metaKey, step = e.shiftKey ? 10 : 1;
   const has = !!frame();
@@ -1074,6 +1271,7 @@ addEventListener("keydown", (e) => {
   else if (k === "o" || k === "O") {
     const s = $("refMode"); s.selectedIndex = (s.selectedIndex + 1) % s.options.length; s.dispatchEvent(new Event("change"));
   } else if (k === "m" || k === "M") { $("markerTool").checked = !$("markerTool").checked; $("markerTool").dispatchEvent(new Event("change")); }
+  else if (k === "Escape" && sel.size) { sel.clear(); refreshTimeline(); }
   else if (k === "f" || k === "F") fit();
   else if (k === "1") setZoom(1, view.clientWidth / 2, view.clientHeight / 2, true);
   else handled = false;
